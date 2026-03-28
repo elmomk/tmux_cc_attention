@@ -19,9 +19,6 @@ target=$(pane_to_window "$TMUX_PANE") || exit 0
 # Skip if attention is set (attention takes priority)
 [ "$(tmux show-window-option -t "$target" -v @claude-attention 2>/dev/null)" = "1" ] && exit 0
 
-# Skip if user is viewing this window
-is_window_active "$TMUX_PANE" && exit 0
-
 color=$(get_active_color | tr -cd 'a-zA-Z0-9#')
 green_fmt=$(get_window_format "$color")
 

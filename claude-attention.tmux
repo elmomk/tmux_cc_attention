@@ -6,7 +6,6 @@
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-CLEAR_SCRIPT="$CURRENT_DIR/scripts/clear.sh"
 STATUS_SCRIPT="$CURRENT_DIR/scripts/status.sh"
 
 # -- Load theme --
@@ -18,17 +17,11 @@ case "$theme" in
 esac
 tmux source-file "$CURRENT_DIR/themes/${theme}.conf"
 
-# -- Hooks --
-escaped_clear=$(printf '%s' "$CLEAR_SCRIPT" | sed "s/'/'\\\\''/g")
-
-# Clean up old v1 duplicate hooks
-for i in 0 1 2 3 4 5; do
+# -- Clean up old auto-clear hooks --
+for i in 0 1 2 3 4 5 100; do
     tmux set-hook -gu "session-window-changed[$i]" 2>/dev/null || true
+    tmux set-hook -gu "client-session-changed[$i]" 2>/dev/null || true
 done
-
-# Register with explicit indices — reload replaces same index, no duplicates
-tmux set-hook -g 'session-window-changed[100]' "run-shell '${escaped_clear}'"
-tmux set-hook -g 'client-session-changed[100]' "run-shell '${escaped_clear}'"
 
 # Store plugin path so other scripts can find it
 tmux set-option -g @claude-attention-plugin-path "$CURRENT_DIR"

@@ -11,9 +11,6 @@ source "$CURRENT_DIR/helpers.sh"
 # Consume stdin (Claude Code sends JSON)
 cat > /dev/null
 
-# Skip if user is already viewing this window
-is_window_active "$TMUX_PANE" && exit 0
-
 target=$(pane_to_window "$TMUX_PANE") || exit 0
 
 color=$(get_attention_color | tr -cd 'a-zA-Z0-9#')
