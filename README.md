@@ -1,74 +1,91 @@
-# tmux Claude Code Attention Plugin
+# tmux_cc_attention
 
-A tmux plugin that provides visual indicators when Claude Code needs your attention or has stopped working. Windows turn **red** on notifications and **grey** when Claude stops, with cross-session awareness so you never miss a prompt.
+A tmux plugin that provides visual indicators for Claude Code session state. Windows turn **green** when Claude is working, **red** when it needs attention, and **dark** when it stops — with cross-session awareness and bundled color themes.
 
 ## Features
 
-- **Attention indicator**: Window turns red when Claude Code sends a notification
-- **Stopped indicator**: Window turns grey when Claude Code stops/idles
+- **Active indicator**: Window turns green when Claude Code is working
+- **Attention indicator**: Window turns red when Claude Code needs your input
+- **Stopped indicator**: Window goes dark when Claude Code stops/idles
 - **Auto-clear**: Indicators clear when you switch to the window
-- **Cross-session**: Status bar shows attention/stopped windows from other sessions
-- **Custom theme**: Dracula-palette theme designed to integrate cleanly (optional)
+- **Cross-session**: Status bar shows indicators from other tmux sessions
+- **Themes**: Bundled themes — Kanagawa Dragon, Catppuccin Mocha, Tokyo Night, Dracula
 
 ## Installation
 
-### Manual
-
 1. Clone the repo:
    ```bash
-   git clone https://github.com/youruser/tmux_claude_code_plugin ~/tmux_claude_code_plugin
+   git clone https://github.com/youruser/tmux_cc_attention ~/tmux_cc_attention
    ```
 
-2. Source the theme (optional) and plugin in `~/.tmux.conf`:
+2. Source a theme and the plugin in `~/.tmux.conf`:
    ```tmux
-   source-file '~/tmux_claude_code_plugin/theme.conf'
-   run-shell '~/tmux_claude_code_plugin/claude-attention.tmux'
+   # Theme first, then TPM, then plugin last
+   source-file '~/tmux_cc_attention/themes/kanagawa-dragon.conf'
+   run '~/.tmux/plugins/tpm/tpm'
+   run-shell '~/tmux_cc_attention/claude-attention.tmux'
    ```
 
 3. Install the Claude Code hooks:
    ```bash
-   ~/tmux_claude_code_plugin/scripts/setup.sh --apply
+   ~/tmux_cc_attention/scripts/setup.sh --apply
    ```
 
-### Load order
+4. Reload tmux:
+   ```bash
+   tmux source ~/.tmux.conf
+   ```
 
-If using the bundled theme with TPM:
-```tmux
-source-file '~/tmux_claude_code_plugin/theme.conf'   # Theme first
-run '~/.tmux/plugins/tpm/tpm'                         # TPM plugins
-run-shell '~/tmux_claude_code_plugin/claude-attention.tmux'  # Plugin last
+## How it works
+
 ```
+Claude Code PreToolUse hook   → active.sh  → window turns GREEN
+Claude Code Notification hook → notify.sh  → window turns RED
+Claude Code Stop hook         → stopped.sh → window turns DARK
+User switches to window       → clear.sh   → window reverts to normal
+tmux status-right             → status.sh  → cross-session indicators
+```
+
+State is stored in tmux window options (`@claude-active`, `@claude-attention`, `@claude-stopped`). No temp files.
+
+Priority: **attention (red) > active (green) > stopped (dark) > normal**
+
+## Themes
+
+Swap one line in `~/.tmux.conf` to change theme:
+
+```tmux
+source-file '~/tmux_cc_attention/themes/kanagawa-dragon.conf'
+# source-file '~/tmux_cc_attention/themes/catppuccin-mocha.conf'
+# source-file '~/tmux_cc_attention/themes/tokyonight.conf'
+# source-file '~/tmux_cc_attention/themes/dracula.conf'
+```
+
+Each theme sets matching colors for the plugin indicators automatically. The selected window tab uses the theme's purple/accent color; green is reserved for active Claude sessions.
 
 ## Configuration
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `@claude-attention-color` | `#ff5555` | Foreground color for attention windows |
-| `@claude-stopped-color` | `#6272a4` | Foreground color for stopped/idle windows |
+| `@claude-active-color` | theme green | Foreground color for active Claude windows |
+| `@claude-attention-color` | theme red | Foreground color for attention windows |
+| `@claude-stopped-color` | theme bg | Foreground color for stopped windows (blends in) |
 | `@claude-attention-bell` | `off` | Also trigger tmux bell on notification |
-| `@claude-window-bg` | `#44475a` | Background color for window labels |
+| `@claude-window-bg` | theme surface | Background color for window labels |
 
-Set options in `~/.tmux.conf` before sourcing the plugin:
+Defaults are set by the theme. Override in `~/.tmux.conf` before sourcing the plugin:
+
 ```tmux
-set -g @claude-attention-color "#ff5555"
 set -g @claude-attention-bell "on"
 ```
-
-## How it works
-
-```
-Claude Code Notification hook → notify.sh  → window turns RED
-Claude Code Stop hook         → stopped.sh → window turns GREY
-User switches to window       → clear.sh   → window reverts to normal
-tmux status-right             → status.sh  → shows cross-session indicators
-```
-
-State is stored in tmux window options (`@claude-attention`, `@claude-stopped`). No temp files. Priority: attention (red) > stopped (grey) > normal.
 
 ## Manual testing
 
 ```bash
-# Simulate notification (from a different window)
+# Simulate active (from a different window)
+echo '{}' | TMUX_PANE=%2 /path/to/scripts/active.sh
+
+# Simulate notification
 echo '{}' | TMUX_PANE=%2 /path/to/scripts/notify.sh
 
 # Simulate stop
@@ -82,4 +99,3 @@ tmux show-hooks -g | grep 'client-session-changed\[100\]'
 ## License
 
 MIT
-# tmux_cc_attention
