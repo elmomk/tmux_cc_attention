@@ -98,4 +98,4 @@ tmux show-hooks -g | grep 'client-session-changed\[100\]'
 
 ## License
 
-MIT
+AGPL-3.0

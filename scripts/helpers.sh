@@ -21,7 +21,7 @@ get_active_color() {
 }
 
 get_stopped_color() {
-    get_tmux_option "@claude-stopped-color" "#282727"
+    get_tmux_option "@claude-stopped-color" "#625e5a"
 }
 
 get_window_format() {
