@@ -24,20 +24,27 @@ get_stopped_color() {
     get_tmux_option "@claude-stopped-color" "#8ba4b0"
 }
 
+# Build window-status-format with state color and prefix icon
+# Usage: get_window_format <fg_color> [prefix]
 get_window_format() {
     local fg="$1"
+    local prefix="${2:-}"
     local bg
-    bg=$(get_tmux_option "@claude-window-bg" "#282727")
-    echo "#[fg=${fg},bg=${bg}] #I #W "
+    bg=$(get_tmux_option "@claude-window-bg" "#282727" | tr -cd 'a-zA-Z0-9#')
+    echo "#[fg=${fg},bg=${bg}] ${prefix}#I #W "
+}
+
+# Build window-status-current-format with state color as background
+# Usage: get_current_window_format <color> [prefix]
+get_current_window_format() {
+    local color="$1"
+    local prefix="${2:-}"
+    local bg
+    bg=$(get_tmux_option "@claude-window-bg" "#282727" | tr -cd 'a-zA-Z0-9#')
+    echo "#[fg=${bg},bg=${color},bold] ${prefix}#I #W "
 }
 
 pane_to_window() {
     local pane_id="$1"
     tmux display-message -p -t "$pane_id" '#{session_name}:#{window_index}'
-}
-
-# Check if the pane's window is currently the active (viewed) window
-is_window_active() {
-    local pane_id="$1"
-    [ "$(tmux display-message -p -t "$pane_id" '#{window_active}')" = "1" ]
 }

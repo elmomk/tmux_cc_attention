@@ -8,18 +8,22 @@
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$CURRENT_DIR/helpers.sh"
 
-# Consume stdin (Claude Code sends JSON)
+# Consume stdin (Claude Code sends JSON payload)
 cat > /dev/null
 
-target=$(pane_to_window "$TMUX_PANE") || exit 0
+# Single tmux call: get target + current markers
+info=$(tmux display-message -p -t "$TMUX_PANE" \
+    '#{session_name}:#{window_index} #{@claude-active}')
+target="${info%% *}"
+current_active="${info##* }"
 
 # Short-circuit: already active
-[ "$(tmux show-window-option -t "$target" -v @claude-active 2>/dev/null)" = "1" ] && exit 0
+[ "$current_active" = "1" ] && exit 0
 
 color=$(get_active_color | tr -cd 'a-zA-Z0-9#')
-green_fmt=$(get_window_format "$color")
 
-tmux set-window-option -t "$target" window-status-format "$green_fmt"
+tmux set-window-option -t "$target" window-status-format "$(get_window_format "$color" "* ")"
+tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$color" "* ")"
 tmux set-window-option -t "$target" @claude-active 1
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null

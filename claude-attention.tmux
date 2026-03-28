@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # TPM-compatible entry point for tmux Claude Code Attention plugin.
+# Requires tmux >= 3.0 for indexed hooks.
+#
 # Usage in .tmux.conf:
 #   set -g @plugin 'elmomk/tmux_cc_attention'
 #   set -g @claude-theme 'kanagawa-dragon'  # optional
@@ -26,19 +28,12 @@ done
 # Store plugin path so other scripts can find it
 tmux set-option -g @claude-attention-plugin-path "$CURRENT_DIR"
 
-# -- Status-right: cross-session indicators --
-att_color=$(tmux show-option -gqv @claude-attention-color)
-att_color="${att_color:-#c4746e}"
-act_color=$(tmux show-option -gqv @claude-active-color)
-act_color="${act_color:-#87a987}"
-stop_color=$(tmux show-option -gqv @claude-stopped-color)
-stop_color="${stop_color:-#282727}"
-
+# -- Status-right: single cross-session indicator call --
 current_right=$(tmux show-option -gqv status-right)
 case "$current_right" in
     *status.sh*)
         ;;
     *)
-        tmux set-option -g status-right "${current_right} #[fg=${att_color}]#($STATUS_SCRIPT --attention)#[fg=${act_color}]#($STATUS_SCRIPT --active)#[fg=${stop_color}]#($STATUS_SCRIPT --stopped)"
+        tmux set-option -g status-right "${current_right} #($STATUS_SCRIPT)"
         ;;
 esac

@@ -54,11 +54,65 @@ EOF
 print_usage() {
     echo "Claude Code Attention Plugin - Hook Setup"
     echo ""
-    echo "Add the following to $SETTINGS_FILE:"
+    echo "Commands:"
+    echo "  --apply   Install hooks into $SETTINGS_FILE"
+    echo "  --check   Verify installation"
+    echo "  --help    Show hook JSON"
+    echo ""
+    echo "Hook JSON:"
     echo ""
     hook_json
+}
+
+check_install() {
+    local ok=true
+
+    echo "=== Claude Code Hooks ==="
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo "FAIL: $SETTINGS_FILE not found"
+        ok=false
+    else
+        for hook_type in PreToolUse Notification Stop; do
+            local count
+            count=$(jq -r ".hooks.${hook_type} // [] | length" "$SETTINGS_FILE" 2>/dev/null || echo 0)
+            if [ "$count" -eq 0 ]; then
+                echo "FAIL: No $hook_type hooks"
+                ok=false
+            elif [ "$count" -gt 1 ]; then
+                echo "WARN: $hook_type has $count entries (expected 1) — run --apply to fix"
+                ok=false
+            else
+                echo "  OK: $hook_type"
+            fi
+        done
+    fi
+
     echo ""
-    echo "Or run with --apply to merge automatically (requires jq)."
+    echo "=== tmux Hooks ==="
+    local theme
+    theme=$(tmux show-option -gqv @claude-theme 2>/dev/null || echo "not set")
+    echo "  Theme: $theme"
+
+    local plugin_path
+    plugin_path=$(tmux show-option -gqv @claude-attention-plugin-path 2>/dev/null || echo "not set")
+    echo "  Plugin path: $plugin_path"
+
+    echo ""
+    echo "=== Colors ==="
+    echo "  Active:    $(tmux show-option -gqv @claude-active-color 2>/dev/null || echo 'default')"
+    echo "  Attention: $(tmux show-option -gqv @claude-attention-color 2>/dev/null || echo 'default')"
+    echo "  Stopped:   $(tmux show-option -gqv @claude-stopped-color 2>/dev/null || echo 'default')"
+
+    echo ""
+    echo "=== Legend ==="
+    echo "  * green  = Claude is working"
+    echo "  ! red    = Claude needs your input"
+    echo "  - blue   = Claude has stopped"
+
+    if [ "$ok" = true ]; then
+        echo ""
+        echo "All checks passed."
+    fi
 }
 
 apply_hook() {
@@ -75,29 +129,28 @@ apply_hook() {
         return
     fi
 
-    # Check if all hooks are already installed
-    local active_installed notify_installed stop_installed
-    active_installed=$(jq -e --arg cmd "$ACTIVE_SCRIPT" '
-        .hooks.PreToolUse // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)
-    ' "$SETTINGS_FILE" 2>/dev/null && echo "yes" || echo "no")
-
-    notify_installed=$(jq -e --arg cmd "$NOTIFY_SCRIPT" '
-        .hooks.Notification // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)
-    ' "$SETTINGS_FILE" 2>/dev/null && echo "yes" || echo "no")
-
-    stop_installed=$(jq -e --arg cmd "$STOPPED_SCRIPT" '
-        .hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)
-    ' "$SETTINGS_FILE" 2>/dev/null && echo "yes" || echo "no")
-
-    if [ "$active_installed" = "yes" ] && [ "$notify_installed" = "yes" ] && [ "$stop_installed" = "yes" ]; then
-        echo "All hooks already installed (PreToolUse, Notification, Stop)."
-        return
-    fi
-
     # Back up existing settings
     cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak"
 
-    # Merge: deep-merge our hook into existing settings
+    # Remove ALL existing tmux_cc_attention hook entries (any path containing our script names),
+    # then add fresh ones. This prevents duplicates from repeated --apply runs or path changes.
+    jq --arg active "$ACTIVE_SCRIPT" --arg notify "$NOTIFY_SCRIPT" --arg stop "$STOPPED_SCRIPT" '
+        # Remove any entries whose command contains active.sh, notify.sh, or stopped.sh
+        # from our plugin (match by script basename pattern)
+        def remove_plugin_hooks:
+            if . == null then []
+            else [.[] | select(
+                (.hooks // []) | all(.command | (
+                    endswith("/active.sh") or endswith("/notify.sh") or endswith("/stopped.sh")
+                ) | not)
+            )]
+            end;
+        .hooks.PreToolUse = (.hooks.PreToolUse | remove_plugin_hooks) |
+        .hooks.Notification = (.hooks.Notification | remove_plugin_hooks) |
+        .hooks.Stop = (.hooks.Stop | remove_plugin_hooks)
+    ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
+
+    # Now merge in our fresh hooks
     jq -s '
         def deep_merge(a; b):
             a as $a | b as $b |
@@ -111,8 +164,9 @@ apply_hook() {
             else $a
             end;
         deep_merge(.[0]; .[1])
-    ' "$SETTINGS_FILE" <(hook_json) > "${SETTINGS_FILE}.tmp"
-    mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+    ' "${SETTINGS_FILE}.tmp" <(hook_json) > "${SETTINGS_FILE}.tmp2"
+    mv "${SETTINGS_FILE}.tmp2" "$SETTINGS_FILE"
+    rm -f "${SETTINGS_FILE}.tmp"
 
     echo "Updated $SETTINGS_FILE (backup at ${SETTINGS_FILE}.bak)."
     echo "Hooks point to:"
@@ -124,6 +178,9 @@ apply_hook() {
 case "${1:-}" in
     --apply)
         apply_hook
+        ;;
+    --check)
+        check_install
         ;;
     --help|-h)
         print_usage

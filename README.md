@@ -1,100 +1,97 @@
 # tmux_cc_attention
 
-A tmux plugin that provides visual indicators for Claude Code session state. Windows turn **green** when Claude is working, **red** when it needs attention, and **dark** when it stops — with cross-session awareness and bundled color themes.
+A tmux plugin that provides visual indicators for Claude Code session state. Windows show `*` green when Claude is working, `!` red when it needs attention, and `-` blue when it stops — with cross-session awareness and bundled color themes.
+
+Requires **tmux >= 3.0**.
 
 ## Features
 
-- **Active indicator**: Window turns green when Claude Code is working
-- **Attention indicator**: Window turns red when Claude Code needs your input
-- **Stopped indicator**: Window goes dark when Claude Code stops/idles
-- **Auto-clear**: Indicators clear when you switch to the window
-- **Cross-session**: Status bar shows indicators from other tmux sessions
-- **Themes**: Bundled themes — Kanagawa Dragon, Catppuccin Mocha, Tokyo Night, Dracula
+- **Active indicator**: `* green` — Claude Code is working
+- **Attention indicator**: `! red` — Claude Code needs your input
+- **Stopped indicator**: `- blue` — Claude Code has stopped
+- **Persistent state**: Colors stay until the actual state changes
+- **Current window**: State visible even on the selected window tab
+- **Cross-session**: Status bar shows `!3 *2 -1` counts from other sessions
+- **Colorblind-friendly**: Text prefixes (`*`, `!`, `-`) alongside colors
+- **Themes**: Kanagawa Dragon, Catppuccin Mocha, Tokyo Night, Dracula
 
 ## Installation
 
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/youruser/tmux_cc_attention ~/tmux_cc_attention
-   ```
+### Via TPM
 
-2. Source a theme and the plugin in `~/.tmux.conf`:
-   ```tmux
-   # Theme first, then TPM, then plugin last
-   source-file '~/tmux_cc_attention/themes/kanagawa-dragon.conf'
-   run '~/.tmux/plugins/tpm/tpm'
-   run-shell '~/tmux_cc_attention/claude-attention.tmux'
-   ```
+Add to `~/.tmux.conf`:
 
-3. Install the Claude Code hooks:
-   ```bash
-   ~/tmux_cc_attention/scripts/setup.sh --apply
-   ```
+```tmux
+set -g @claude-theme 'catppuccin-mocha'  # or kanagawa-dragon, tokyonight, dracula
+set -g @plugin 'elmomk/tmux_cc_attention'
 
-4. Reload tmux:
-   ```bash
-   tmux source ~/.tmux.conf
-   ```
+run '~/.tmux/plugins/tpm/tpm'
+```
+
+Then press `prefix + I` to install.
+
+### Manual
+
+```bash
+git clone https://github.com/elmomk/tmux_cc_attention ~/tmux_cc_attention
+```
+
+Add to `~/.tmux.conf`:
+
+```tmux
+set -g @claude-theme 'catppuccin-mocha'
+run-shell '~/tmux_cc_attention/claude-attention.tmux'
+```
+
+### Claude Code hooks
+
+```bash
+~/.tmux/plugins/tmux_cc_attention/scripts/setup.sh --apply
+```
+
+Verify with:
+
+```bash
+~/.tmux/plugins/tmux_cc_attention/scripts/setup.sh --check
+```
 
 ## How it works
 
 ```
-Claude Code PreToolUse hook   → active.sh  → window turns GREEN
-Claude Code Notification hook → notify.sh  → window turns RED
-Claude Code Stop hook         → stopped.sh → window turns DARK
-User switches to window       → clear.sh   → window reverts to normal
-tmux status-right             → status.sh  → cross-session indicators
+Claude Code PreToolUse hook   → active.sh  → * green  (working)
+Claude Code Notification hook → notify.sh  → ! red    (needs input)
+Claude Code Stop hook         → stopped.sh → - blue   (stopped)
+tmux status-right             → status.sh  → !3 *2 -1 (cross-session counts)
 ```
 
-State is stored in tmux window options (`@claude-active`, `@claude-attention`, `@claude-stopped`). No temp files.
-
-Priority: **attention (red) > active (green) > stopped (dark) > normal**
+State is stored in tmux window options (`@claude-active`, `@claude-attention`, `@claude-stopped`). No temp files. Each state freely transitions to any other — the last hook to fire wins.
 
 ## Themes
 
-Swap one line in `~/.tmux.conf` to change theme:
+Set `@claude-theme` before the plugin loads:
 
 ```tmux
-source-file '~/tmux_cc_attention/themes/kanagawa-dragon.conf'
-# source-file '~/tmux_cc_attention/themes/catppuccin-mocha.conf'
-# source-file '~/tmux_cc_attention/themes/tokyonight.conf'
-# source-file '~/tmux_cc_attention/themes/dracula.conf'
+set -g @claude-theme 'kanagawa-dragon'
+# Options: kanagawa-dragon, catppuccin-mocha, tokyonight, dracula
 ```
 
-Each theme sets matching colors for the plugin indicators automatically. The selected window tab uses the theme's purple/accent color; green is reserved for active Claude sessions.
+Each theme sets matching colors for all indicators. The selected window tab uses the theme's purple/accent; green is reserved for active Claude sessions.
 
 ## Configuration
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `@claude-active-color` | theme green | Foreground color for active Claude windows |
-| `@claude-attention-color` | theme red | Foreground color for attention windows |
-| `@claude-stopped-color` | theme bg | Foreground color for stopped windows (blends in) |
+| `@claude-theme` | `kanagawa-dragon` | Theme to load |
+| `@claude-active-color` | theme green | Color for active Claude windows |
+| `@claude-attention-color` | theme red | Color for attention windows |
+| `@claude-stopped-color` | theme blue | Color for stopped windows |
 | `@claude-attention-bell` | `off` | Also trigger tmux bell on notification |
 | `@claude-window-bg` | theme surface | Background color for window labels |
 
-Defaults are set by the theme. Override in `~/.tmux.conf` before sourcing the plugin:
+## Known limitations
 
-```tmux
-set -g @claude-attention-bell "on"
-```
-
-## Manual testing
-
-```bash
-# Simulate active (from a different window)
-echo '{}' | TMUX_PANE=%2 /path/to/scripts/active.sh
-
-# Simulate notification
-echo '{}' | TMUX_PANE=%2 /path/to/scripts/notify.sh
-
-# Simulate stop
-echo '{}' | TMUX_PANE=%2 /path/to/scripts/stopped.sh
-
-# Verify hooks (should show exactly one entry per hook)
-tmux show-hooks -g | grep 'session-window-changed\[100\]'
-tmux show-hooks -g | grep 'client-session-changed\[100\]'
-```
+- Multiple Claude instances in the same tmux window share one state indicator (window-level, not pane-level)
+- Requires tmux >= 3.0 for indexed hooks
 
 ## License
 
