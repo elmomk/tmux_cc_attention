@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
 # Cross-session status-right component.
-# Shows counts of attention/active/stopped windows from OTHER sessions.
-# Usage: status.sh (single call, outputs all segments with colors)
+# Runs every status-interval (5s). Two jobs:
+# 1. Clean up stale markers (Claude Code exited but window still colored)
+# 2. Show counts of attention/active/stopped windows from OTHER sessions.
 
 current_session=$(tmux display-message -p '#{session_name}' 2>/dev/null) || exit 0
 
-# Read colors
+# -- Cleanup: clear markers on windows where Claude Code has exited --
+# Check ALL sessions so stale markers don't linger anywhere
+while IFS=' ' read -r sess_name win_idx att act stop; do
+    [ "$att" != "1" ] && [ "$act" != "1" ] && [ "$stop" != "1" ] && continue
+
+    # Check if any pane in this window is still running claude
+    target="${sess_name}:${win_idx}"
+    if ! tmux list-panes -t "$target" -F '#{pane_current_command}' 2>/dev/null | grep -q '^claude$'; then
+        # Claude exited — clear markers
+        tmux set-window-option -t "$target" -u window-status-format 2>/dev/null
+        tmux set-window-option -t "$target" -u window-status-current-format 2>/dev/null
+        tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
+        tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
+        tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
+    fi
+done < <(tmux list-windows -a -F "#{session_name} #{window_index} #{@claude-attention} #{@claude-active} #{@claude-stopped}" 2>/dev/null)
+
+# -- Cross-session counts --
 att_color=$(tmux show-option -gqv @claude-attention-color)
 att_color="${att_color:-#c4746e}"
 act_color=$(tmux show-option -gqv @claude-active-color)
@@ -13,13 +31,11 @@ act_color="${act_color:-#87a987}"
 stop_color=$(tmux show-option -gqv @claude-stopped-color)
 stop_color="${stop_color:-#8ba4b0}"
 
-# Single list-windows call for all sessions
 att_count=0
 act_count=0
 stop_count=0
 
 while IFS=' ' read -r sess_name att_val act_val stop_val; do
-    # Skip current session (those use window colors directly)
     [ "$sess_name" = "$current_session" ] && continue
 
     if [ "$att_val" = "1" ]; then
