@@ -17,9 +17,9 @@ fmt_cur=$(tmux show-option -gqv @claude-fmt-attention-cur)
 tmux set-window-option -t "$target" window-status-format "$fmt" 2>/dev/null
 tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/dev/null
 
-# Set attention marker. Leave @claude-active so concurrent PreToolUse calls
-# hit the short-circuit instead of racing to overwrite red with green.
+# Set attention marker, clear active and stopped
 tmux set-window-option -t "$target" @claude-attention 1 2>/dev/null
+tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 
 # Optional bell
