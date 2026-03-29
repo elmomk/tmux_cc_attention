@@ -5,8 +5,8 @@
 [ -z "$TMUX" ] && exit 0
 [ -z "$TMUX_PANE" ] && exit 0
 
-# Close stdin immediately (no fork, no blocking)
-exec 0</dev/null
+# Drain stdin in background (polite to Claude Code, non-blocking for us)
+cat > /dev/null &
 
 target=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}') || exit 0
 
