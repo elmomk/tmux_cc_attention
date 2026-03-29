@@ -51,7 +51,7 @@ case "$current_right" in
     *status.sh*)
         ;;
     *)
-        tmux set-option -g status-right "${current_right} #($STATUS_SCRIPT)"
+        tmux set-option -g status-right "${current_right} #($STATUS_SCRIPT)#{@claude-done-msg}"
         ;;
 esac
 
