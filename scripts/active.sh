@@ -5,13 +5,10 @@
 [ -z "$TMUX" ] && exit 0
 [ -z "$TMUX_PANE" ] && exit 0
 
-CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$CURRENT_DIR/helpers.sh"
+# Close stdin immediately (no fork, no blocking on large JSON payloads)
+exec 0</dev/null
 
-# Consume stdin (Claude Code sends JSON payload)
-cat > /dev/null
-
-# Single tmux call: get target + current markers (pipe-delimited for safe parsing)
+# Single tmux call: get target + current markers (pipe-delimited)
 info=$(tmux display-message -p -t "$TMUX_PANE" \
     '#{session_name}:#{window_index}|#{@claude-active}|#{@claude-attention}')
 target="${info%%|*}"
@@ -23,18 +20,21 @@ current_attention="${rest##*|}"
 [ "$current_active" = "1" ] && exit 0
 [ "$current_attention" = "1" ] && exit 0
 
-color=$(get_active_color | tr -cd 'a-zA-Z0-9#')
+# Read cached format strings (precomputed at plugin load, 1 tmux call)
+fmt=$(tmux show-option -gqv @claude-fmt-active)
+fmt_cur=$(tmux show-option -gqv @claude-fmt-active-cur)
 
-tmux set-window-option -t "$target" window-status-format "$(get_window_format "$color" "* ")" 2>/dev/null
-tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$color" "* ")" 2>/dev/null
+tmux set-window-option -t "$target" window-status-format "$fmt" 2>/dev/null
+tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/dev/null
 tmux set-window-option -t "$target" @claude-active 1 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 
 # Guard against race: if notify.sh set attention while we were writing,
 # restore the attention format so the window doesn't stay green.
 if [ "$(tmux show-window-option -t "$target" -v @claude-attention 2>/dev/null)" = "1" ]; then
-    att_color=$(get_attention_color | tr -cd 'a-zA-Z0-9#')
-    tmux set-window-option -t "$target" window-status-format "$(get_window_format "$att_color" "! ")" 2>/dev/null
-    tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$att_color" "! ")" 2>/dev/null
+    att_fmt=$(tmux show-option -gqv @claude-fmt-attention)
+    att_fmt_cur=$(tmux show-option -gqv @claude-fmt-attention-cur)
+    tmux set-window-option -t "$target" window-status-format "$att_fmt" 2>/dev/null
+    tmux set-window-option -t "$target" window-status-current-format "$att_fmt_cur" 2>/dev/null
     tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
 fi
