@@ -58,7 +58,7 @@ while IFS='|' read -r sess win_idx win_name att act stop; do
         label="${ansi_dim}no state${ansi_reset}"
     fi
 
-    lines+=("$(printf '%b  %-20s %-20s  (%b)' "$icon" "$target" "$win_name" "$label")")
+    lines+=("$(printf '%b %-16s %-14s (%b)' "$icon" "$target" "$win_name" "$label")")
 done < <(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}' 2>/dev/null)
 
 if [ ${#lines[@]} -eq 0 ]; then
@@ -70,11 +70,11 @@ fi
 # Pipe to fzf
 selected=$(printf '%s\n' "${lines[@]}" | fzf --ansi --no-sort \
     --header='Claude Sessions — enter to switch, esc to cancel' \
-    --preview='target=$(echo {} | sed "s/^.\{3\}//" | awk "{print \$1}"); tmux capture-pane -ep -t "$target" 2>/dev/null' \
+    --preview='target=$(echo {} | sed "s/^.\{2\}//" | awk "{print \$1}"); tmux capture-pane -ep -t "$target" 2>/dev/null' \
     --preview-window='right:40%')
 
 [ -z "$selected" ] && exit 0
 
 # Extract target (session:window) from the selected line
-target=$(echo "$selected" | sed 's/^.\{3\}//' | awk '{print $1}')
+target=$(echo "$selected" | sed 's/^.\{2\}//' | awk '{print $1}')
 [ -n "$target" ] && tmux switch-client -t "$target" 2>/dev/null
