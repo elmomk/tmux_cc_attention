@@ -13,6 +13,8 @@ Requires **tmux >= 3.0**.
 - **Current window**: State visible even on the selected window tab
 - **Cross-session**: Status bar shows `!3 *2 -1` counts from other sessions
 - **Colorblind-friendly**: Text prefixes (`*`, `!`, `-`) alongside colors
+- **Session dashboard**: `prefix + G` popup to see all Claude windows and jump to one (opt-in, requires fzf)
+- **Done notification**: Inline status-right indicator when Claude finishes working (opt-in)
 - **Themes**: Kanagawa Dragon, Catppuccin Mocha, Tokyo Night, Dracula
 
 ## Installation
@@ -22,13 +24,16 @@ Requires **tmux >= 3.0**.
 Add to `~/.tmux.conf`:
 
 ```tmux
+# -- Claude Code Attention Plugin --
 set -g @claude-theme 'catppuccin-mocha'  # or kanagawa-dragon, tokyonight, dracula
+set -g @claude-popup-key 'G'             # prefix + G opens session dashboard (optional, requires fzf)
+set -g @claude-done-popup 'on'           # show inline notification when Claude finishes (optional)
 set -g @plugin 'elmomk/tmux_cc_attention'
 
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Then press `prefix + I` to install.
+Then press `prefix + I` to install. Only `@claude-theme` and `@plugin` are required — the rest are opt-in.
 
 ### Manual
 
@@ -40,6 +45,8 @@ Add to `~/.tmux.conf`:
 
 ```tmux
 set -g @claude-theme 'catppuccin-mocha'
+set -g @claude-popup-key 'G'       # optional
+set -g @claude-done-popup 'on'     # optional
 run-shell '~/tmux_cc_attention/claude-attention.tmux'
 ```
 

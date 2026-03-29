@@ -49,7 +49,7 @@
 
 Priority: **ATTENTION > ACTIVE > STOPPED > NORMAL**
 
-- `notify.sh` always wins — sets `@claude-attention`, clears `@claude-stopped`
+- `notify.sh` always wins — sets `@claude-attention`, clears `@claude-active` and `@claude-stopped`
 - `active.sh` clears `@claude-attention` and `@claude-stopped`, short-circuits if already active
 - `stopped.sh` clears `@claude-active` and `@claude-attention`
 - `clear.sh` clears all markers and reverts to global format
@@ -67,6 +67,10 @@ A post-write race guard in `active.sh` re-checks `@claude-attention` after writi
 5. On selection: `tmux switch-client -t session:window`
 
 The keybinding is registered in `claude-attention.tmux` only if `@claude-popup-key` is set (opt-in).
+
+## Done Notification
+
+When `@claude-done-popup` is `on`, `stopped.sh` detects active→stopped transitions and sets `@claude-done-msg` (a global tmux option) with a colored inline message. This is rendered in `status-right` via `#{@claude-done-msg}`, appearing alongside cross-session counts. A background process clears the option after 5 seconds.
 
 ## Cross-Session Status
 
