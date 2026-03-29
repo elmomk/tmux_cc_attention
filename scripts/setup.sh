@@ -132,18 +132,16 @@ apply_hook() {
     # Back up existing settings
     cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak"
 
-    # Remove ALL existing tmux_cc_attention hook entries (any path containing our script names),
+    # Remove existing tmux_cc_attention hook entries (scoped to our plugin paths),
     # then add fresh ones. This prevents duplicates from repeated --apply runs or path changes.
-    jq --arg active "$ACTIVE_SCRIPT" --arg notify "$NOTIFY_SCRIPT" --arg stop "$STOPPED_SCRIPT" '
-        # Remove any entries whose command contains active.sh, notify.sh, or stopped.sh
-        # from our plugin (match by script basename pattern)
+    jq '
+        def is_plugin_hook:
+            (.hooks // []) | any(.command | (
+                contains("tmux_cc_attention") or contains("tmux_claude_code_plugin")
+            ));
         def remove_plugin_hooks:
             if . == null then []
-            else [.[] | select(
-                (.hooks // []) | all(.command | (
-                    endswith("/active.sh") or endswith("/notify.sh") or endswith("/stopped.sh")
-                ) | not)
-            )]
+            else [.[] | select(is_plugin_hook | not)]
             end;
         .hooks.PreToolUse = (.hooks.PreToolUse | remove_plugin_hooks) |
         .hooks.Notification = (.hooks.Notification | remove_plugin_hooks) |

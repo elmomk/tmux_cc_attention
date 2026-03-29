@@ -1,29 +1,12 @@
 #!/usr/bin/env bash
 # Cross-session status-right component.
-# Runs every status-interval (5s). Two jobs:
+# Runs every status-interval (5s). Two jobs in a single list-windows pass:
 # 1. Clean up stale markers (Claude Code exited but window still colored)
 # 2. Show counts of attention/active/stopped windows from OTHER sessions.
 
 current_session=$(tmux display-message -p '#{session_name}' 2>/dev/null) || exit 0
 
-# -- Cleanup: clear markers on windows where Claude Code has exited --
-# Check ALL sessions so stale markers don't linger anywhere
-while IFS=' ' read -r sess_name win_idx att act stop; do
-    [ "$att" != "1" ] && [ "$act" != "1" ] && [ "$stop" != "1" ] && continue
-
-    # Check if any pane in this window is still running claude
-    target="${sess_name}:${win_idx}"
-    if ! tmux list-panes -t "$target" -F '#{pane_current_command}' 2>/dev/null | grep -q '^claude$'; then
-        # Claude exited — clear markers
-        tmux set-window-option -t "$target" -u window-status-format 2>/dev/null
-        tmux set-window-option -t "$target" -u window-status-current-format 2>/dev/null
-        tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
-        tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
-        tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
-    fi
-done < <(tmux list-windows -a -F "#{session_name} #{window_index} #{@claude-attention} #{@claude-active} #{@claude-stopped}" 2>/dev/null)
-
-# -- Cross-session counts --
+# Read colors
 att_color=$(tmux show-option -gqv @claude-attention-color)
 att_color="${att_color:-#c4746e}"
 act_color=$(tmux show-option -gqv @claude-active-color)
@@ -35,17 +18,36 @@ att_count=0
 act_count=0
 stop_count=0
 
-while IFS=' ' read -r sess_name att_val act_val stop_val; do
+# Single pass over all windows
+while IFS='|' read -r sess_name win_idx att act stop; do
+    [ "$att" != "1" ] && [ "$act" != "1" ] && [ "$stop" != "1" ] && continue
+
+    target="${sess_name}:${win_idx}"
+
+    # Check if any pane in this window is still running claude
+    if ! tmux list-panes -t "$target" -F '#{pane_current_command}' 2>/dev/null | grep -qiE '^claude(-code)?$'; then
+        # Re-verify before clearing (close TOCTOU window)
+        if ! tmux list-panes -t "$target" -F '#{pane_current_command}' 2>/dev/null | grep -qiE '^claude(-code)?$'; then
+            tmux set-window-option -t "$target" -u window-status-format 2>/dev/null
+            tmux set-window-option -t "$target" -u window-status-current-format 2>/dev/null
+            tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
+            tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
+            tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
+        fi
+        continue
+    fi
+
+    # Count cross-session markers (skip current session)
     [ "$sess_name" = "$current_session" ] && continue
 
-    if [ "$att_val" = "1" ]; then
+    if [ "$att" = "1" ]; then
         att_count=$((att_count + 1))
-    elif [ "$act_val" = "1" ]; then
+    elif [ "$act" = "1" ]; then
         act_count=$((act_count + 1))
-    elif [ "$stop_val" = "1" ]; then
+    elif [ "$stop" = "1" ]; then
         stop_count=$((stop_count + 1))
     fi
-done < <(tmux list-windows -a -F "#{session_name} #{@claude-attention} #{@claude-active} #{@claude-stopped}" 2>/dev/null)
+done < <(tmux list-windows -a -F "#{session_name}|#{window_index}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}" 2>/dev/null)
 
 output=""
 [ "$att_count" -gt 0 ] && output="${output}#[fg=${att_color}]!${att_count} "

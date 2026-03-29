@@ -25,8 +25,8 @@ fi
 
 color=$(get_stopped_color | tr -cd 'a-zA-Z0-9#')
 
-tmux set-window-option -t "$target" window-status-format "$(get_window_format "$color" "- ")"
-tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$color" "- ")"
+tmux set-window-option -t "$target" window-status-format "$(get_window_format "$color" "- ")" 2>/dev/null
+tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$color" "- ")" 2>/dev/null
 
 # Set stopped marker
 tmux set-window-option -t "$target" @claude-stopped 1
