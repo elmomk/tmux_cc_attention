@@ -6,7 +6,7 @@
 if ! command -v fzf >/dev/null 2>&1; then
     echo "fzf is required for the Claude Sessions popup."
     echo "Install it: https://github.com/junegunn/fzf#installation"
-    read -r -n 1
+    sleep 3
     exit 1
 fi
 
@@ -63,7 +63,7 @@ done < <(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}
 
 if [ ${#lines[@]} -eq 0 ]; then
     echo "No Claude sessions found."
-    read -r -n 1
+    sleep 2
     exit 0
 fi
 
