@@ -18,9 +18,9 @@ color=$(get_attention_color | tr -cd 'a-zA-Z0-9#')
 tmux set-window-option -t "$target" window-status-format "$(get_window_format "$color" "! ")"
 tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$color" "! ")"
 
-# Set attention marker, clear active/stopped
+# Set attention marker. Leave @claude-active so concurrent PreToolUse calls
+# hit the short-circuit instead of racing to overwrite red with green.
 tmux set-window-option -t "$target" @claude-attention 1
-tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 
 # Optional bell
