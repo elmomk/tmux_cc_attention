@@ -97,6 +97,7 @@ The popup shows each Claude window with a state icon (`!` attention, `*` working
 |--------|---------|---------|
 | `@claude-theme` | `kanagawa-dragon` | Theme to load |
 | `@claude-popup-key` | *(unset)* | Key to open session dashboard popup (opt-in) |
+| `@claude-done-popup` | `off` | Show a message when Claude finishes (green→blue) |
 | `@claude-active-color` | theme green | Color for active Claude windows |
 | `@claude-attention-color` | theme red | Color for attention windows |
 | `@claude-stopped-color` | theme blue | Color for stopped windows |

@@ -100,6 +100,7 @@ All state lives in **tmux window options** — no temp files:
 | `@claude-stopped` | per-window | `1` or unset | Claude has stopped |
 | `window-status-format` | per-window override | format string | Visual color change |
 | `@claude-popup-key` | global | key name or unset | Keybinding for session dashboard popup |
+| `@claude-done-popup` | global | `on` or unset | Show message on active→stopped transition |
 
 Clearing means unsetting the per-window override, which reverts to the global format.
 
