@@ -77,11 +77,26 @@ set -g @claude-theme 'kanagawa-dragon'
 
 Each theme sets matching colors for all indicators. The selected window tab uses the theme's purple/accent; green is reserved for active Claude sessions.
 
+## Session Dashboard & Quick Switcher
+
+An optional popup that shows all Claude windows with their state and lets you jump to any one. Requires [fzf](https://github.com/junegunn/fzf).
+
+Add to `~/.tmux.conf` (before the plugin loads):
+
+```tmux
+set -g @claude-popup-key 'G'   # prefix + G opens the popup
+```
+
+If `@claude-popup-key` is not set, no keybinding is registered.
+
+The popup shows each Claude window with a state icon (`!` attention, `*` working, `-` stopped), a live preview of the terminal content, and switches to the selected window on enter.
+
 ## Configuration
 
 | Option | Default | Purpose |
 |--------|---------|---------|
 | `@claude-theme` | `kanagawa-dragon` | Theme to load |
+| `@claude-popup-key` | *(unset)* | Key to open session dashboard popup (opt-in) |
 | `@claude-active-color` | theme green | Color for active Claude windows |
 | `@claude-attention-color` | theme red | Color for attention windows |
 | `@claude-stopped-color` | theme blue | Color for stopped windows |

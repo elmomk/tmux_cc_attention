@@ -16,9 +16,8 @@ rest="${info#*|}"
 current_active="${rest%%|*}"
 current_attention="${rest##*|}"
 
-# Short-circuit: already active, or attention is set (never overwrite red)
+# Short-circuit: already active (no work to do)
 [ "$current_active" = "1" ] && exit 0
-[ "$current_attention" = "1" ] && exit 0
 
 # Read cached format strings (precomputed at plugin load, 1 tmux call)
 fmt=$(tmux show-option -gqv @claude-fmt-active)
@@ -28,6 +27,7 @@ tmux set-window-option -t "$target" window-status-format "$fmt" 2>/dev/null
 tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/dev/null
 tmux set-window-option -t "$target" @claude-active 1 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
+tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
 
 # Guard against race: if notify.sh set attention while we were writing,
 # restore the attention format so the window doesn't stay green.

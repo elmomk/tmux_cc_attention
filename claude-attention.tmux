@@ -54,3 +54,9 @@ case "$current_right" in
         tmux set-option -g status-right "${current_right} #($STATUS_SCRIPT)"
         ;;
 esac
+
+# -- Opt-in popup keybinding --
+popup_key=$(tmux show-option -gqv @claude-popup-key)
+if [ -n "$popup_key" ]; then
+    tmux bind-key "$popup_key" display-popup -E -w 60% -h 60% -T ' Claude Sessions ' "$CURRENT_DIR/scripts/popup.sh"
+fi

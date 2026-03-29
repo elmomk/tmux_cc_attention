@@ -20,15 +20,15 @@
            │               │               │
            └───────────────┼───────────────┘
                            │
-                    User switches to
-                    the window (hook)
-                           │
-                           ▼
-                       clear.sh
-                           │
-                           ▼
-                  Unset format override
-                  Unset all markers
+                    User switches to          User presses
+                    the window (hook)         popup key
+                           │                      │
+                           ▼                      ▼
+                       clear.sh              popup.sh
+                           │                      │
+                           ▼                      ▼
+                  Unset format override    fzf dashboard
+                  Unset all markers        switch-client
 ```
 
 ## State Machine
@@ -38,22 +38,35 @@
     ┌─────────────────────────┐  ┌──────────────────┐
     │                         ▼  │                   ▼
   NORMAL ─── active.sh ─── ACTIVE ── notify.sh ── ATTENTION
-    ▲                         │                      │
-    │         stopped.sh      │                      │
-    │    ┌────────────────────┘                      │
-    │    ▼                                           │
-  STOPPED                                            │
-    ▲                                                │
-    └──────────── clear.sh ──────────────────────────┘
-    └──────────── clear.sh (from any state) ─────────┘
+    ▲                         │                      │  │
+    │         stopped.sh      │       active.sh      │  │
+    │    ┌────────────────────┘      (user replied)  │  │
+    │    ▼                              ┌────────────┘  │
+  STOPPED ◄──── stopped.sh ────────────┘                │
+    ▲                                                   │
+    └──────────── clear.sh (from any state) ────────────┘
 ```
 
 Priority: **ATTENTION > ACTIVE > STOPPED > NORMAL**
 
-- `notify.sh` always wins — clears `@claude-active` and `@claude-stopped`, sets `@claude-attention`
-- `active.sh` skips if `@claude-attention` is set, short-circuits if already active
-- `stopped.sh` skips if `@claude-attention` is set, clears `@claude-active`
+- `notify.sh` always wins — sets `@claude-attention`, clears `@claude-stopped`
+- `active.sh` clears `@claude-attention` and `@claude-stopped`, short-circuits if already active
+- `stopped.sh` clears `@claude-active` and `@claude-attention`
 - `clear.sh` clears all markers and reverts to global format
+
+A post-write race guard in `active.sh` re-checks `@claude-attention` after writing — if `notify.sh` set it concurrently, the attention format is restored.
+
+## Session Dashboard Popup
+
+`popup.sh` runs inside `tmux display-popup -E` when the user presses the configured key (`@claude-popup-key`). It:
+
+1. Calls `tmux list-panes -a` to find all windows with a Claude process
+2. Calls `tmux list-windows -a` to read state markers and window names
+3. Formats each Claude window with ANSI-colored state icons
+4. Pipes to `fzf --ansi` with a live `capture-pane` preview
+5. On selection: `tmux switch-client -t session:window`
+
+The keybinding is registered in `claude-attention.tmux` only if `@claude-popup-key` is set (opt-in).
 
 ## Cross-Session Status
 
@@ -86,6 +99,7 @@ All state lives in **tmux window options** — no temp files:
 | `@claude-attention` | per-window | `1` or unset | Claude needs user attention |
 | `@claude-stopped` | per-window | `1` or unset | Claude has stopped |
 | `window-status-format` | per-window override | format string | Visual color change |
+| `@claude-popup-key` | global | key name or unset | Keybinding for session dashboard popup |
 
 Clearing means unsetting the per-window override, which reverts to the global format.
 
