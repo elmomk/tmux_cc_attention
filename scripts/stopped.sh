@@ -13,20 +13,12 @@ cat > /dev/null
 
 target=$(pane_to_window "$TMUX_PANE") || exit 0
 
-# Always clear active (Claude has stopped working regardless)
-tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
-
-# If attention is set: clear the marker so the next PreToolUse (when the user
-# responds) can transition to active/green — but keep the red window format.
-if [ "$(tmux show-window-option -t "$target" -v @claude-attention 2>/dev/null)" = "1" ]; then
-    tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
-    exit 0
-fi
-
 color=$(get_stopped_color | tr -cd 'a-zA-Z0-9#')
 
 tmux set-window-option -t "$target" window-status-format "$(get_window_format "$color" "- ")" 2>/dev/null
 tmux set-window-option -t "$target" window-status-current-format "$(get_current_window_format "$color" "- ")" 2>/dev/null
 
-# Set stopped marker
-tmux set-window-option -t "$target" @claude-stopped 1
+# Set stopped marker, clear active and attention
+tmux set-window-option -t "$target" @claude-stopped 1 2>/dev/null
+tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
+tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
