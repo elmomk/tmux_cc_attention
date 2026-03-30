@@ -26,7 +26,6 @@ tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/d
 tmux set-window-option -t "$target" @claude-stopped 1 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
-tmux set-window-option -t "$target" -u @claude-idle 2>/dev/null
 
 # Opt-in done notification: brief inline status-right indicator on active → stopped
 if [ "$was_active" = "1" ]; then

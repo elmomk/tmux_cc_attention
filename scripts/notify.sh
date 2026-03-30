@@ -20,7 +20,6 @@ tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/d
 # Set attention marker, clear active and stopped
 tmux set-window-option -t "$target" @claude-attention 1 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
-tmux set-window-option -t "$target" -u @claude-idle 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 
 # Optional bell

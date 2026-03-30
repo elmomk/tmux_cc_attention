@@ -15,8 +15,6 @@ att_color=$(tmux show-option -gqv @claude-attention-color)
 att_color="${att_color:-#c4746e}"
 act_color=$(tmux show-option -gqv @claude-active-color)
 act_color="${act_color:-#87a987}"
-idle_color=$(tmux show-option -gqv @claude-idle-color)
-idle_color="${idle_color:-#b6927b}"
 stop_color=$(tmux show-option -gqv @claude-stopped-color)
 stop_color="${stop_color:-#8ba4b0}"
 
@@ -28,7 +26,6 @@ hex_to_ansi() {
 
 ansi_att=$(hex_to_ansi "$att_color")
 ansi_act=$(hex_to_ansi "$act_color")
-ansi_idle=$(hex_to_ansi "$idle_color")
 ansi_stop=$(hex_to_ansi "$stop_color")
 ansi_reset=$'\033[0m'
 ansi_dim=$'\033[2m'
@@ -43,7 +40,7 @@ done < <(tmux list-panes -a -F '#{session_name}|#{window_index}|#{pane_current_c
 
 # Collect formatted lines for Claude windows
 lines=()
-while IFS='|' read -r sess win_idx win_name att act idle stop; do
+while IFS='|' read -r sess win_idx win_name att act stop; do
     target="${sess}:${win_idx}"
     [ -z "${claude_windows[$target]+_}" ] && continue
 
@@ -53,19 +50,16 @@ while IFS='|' read -r sess win_idx win_name att act idle stop; do
     elif [ "$act" = "1" ]; then
         icon="${ansi_act}*${ansi_reset}"
         label="${ansi_act}working${ansi_reset}"
-    elif [ "$idle" = "1" ]; then
-        icon="${ansi_idle}~${ansi_reset}"
-        label="${ansi_idle}idle${ansi_reset}"
     elif [ "$stop" = "1" ]; then
         icon="${ansi_stop}-${ansi_reset}"
-        label="${ansi_stop}stopped${ansi_reset}"
+        label="${ansi_stop}idle${ansi_reset}"
     else
         icon=" "
         label="${ansi_dim}no state${ansi_reset}"
     fi
 
     lines+=("$(printf '%b %-16s %-14s (%b)' "$icon" "$target" "$win_name" "$label")")
-done < <(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{@claude-attention}|#{@claude-active}|#{@claude-idle}|#{@claude-stopped}' 2>/dev/null)
+done < <(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}' 2>/dev/null)
 
 if [ ${#lines[@]} -eq 0 ]; then
     echo "No Claude sessions found."

@@ -24,8 +24,6 @@ att_color=$(tmux show-option -gqv @claude-attention-color)
 att_color="${att_color:-#c4746e}"
 act_color=$(tmux show-option -gqv @claude-active-color)
 act_color="${act_color:-#87a987}"
-idle_color=$(tmux show-option -gqv @claude-idle-color)
-idle_color="${idle_color:-#b6927b}"
 stop_color=$(tmux show-option -gqv @claude-stopped-color)
 stop_color="${stop_color:-#8ba4b0}"
 win_bg=$(tmux show-option -gqv @claude-window-bg)
@@ -35,8 +33,6 @@ tmux set-option -g @claude-fmt-active       "#[fg=${act_color},bg=${win_bg}] * #
 tmux set-option -g @claude-fmt-active-cur   "#[fg=${win_bg},bg=${act_color},bold] * #I #W "
 tmux set-option -g @claude-fmt-attention    "#[fg=${att_color},bg=${win_bg}] ! #I #W "
 tmux set-option -g @claude-fmt-attention-cur "#[fg=${win_bg},bg=${att_color},bold] ! #I #W "
-tmux set-option -g @claude-fmt-idle         "#[fg=${idle_color},bg=${win_bg}] ~ #I #W "
-tmux set-option -g @claude-fmt-idle-cur     "#[fg=${win_bg},bg=${idle_color},bold] ~ #I #W "
 tmux set-option -g @claude-fmt-stopped      "#[fg=${stop_color},bg=${win_bg}] - #I #W "
 tmux set-option -g @claude-fmt-stopped-cur  "#[fg=${win_bg},bg=${stop_color},bold] - #I #W "
 

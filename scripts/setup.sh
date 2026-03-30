@@ -5,7 +5,6 @@ set -euo pipefail
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTIVE_SCRIPT="$CURRENT_DIR/active.sh"
-IDLE_SCRIPT="$CURRENT_DIR/idle.sh"
 NOTIFY_SCRIPT="$CURRENT_DIR/notify.sh"
 STOPPED_SCRIPT="$CURRENT_DIR/stopped.sh"
 SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -40,7 +39,7 @@ hook_json() {
         "hooks": [
           {
             "type": "command",
-            "command": "$IDLE_SCRIPT"
+            "command": "$STOPPED_SCRIPT"
           }
         ]
       }
@@ -113,15 +112,13 @@ check_install() {
     echo "=== Colors ==="
     echo "  Active:    $(tmux show-option -gqv @claude-active-color 2>/dev/null || echo 'default')"
     echo "  Attention: $(tmux show-option -gqv @claude-attention-color 2>/dev/null || echo 'default')"
-    echo "  Idle:      $(tmux show-option -gqv @claude-idle-color 2>/dev/null || echo 'default')"
     echo "  Stopped:   $(tmux show-option -gqv @claude-stopped-color 2>/dev/null || echo 'default')"
 
     echo ""
     echo "=== Legend ==="
     echo "  * green  = Claude is working"
     echo "  ! red    = Claude needs your input"
-    echo "  ~ amber  = Claude is idle/waiting"
-    echo "  - blue   = Claude has stopped"
+    echo "  - blue   = Claude is idle or has stopped"
 
     if [ "$ok" = true ]; then
         echo ""
@@ -183,7 +180,7 @@ apply_hook() {
     echo "Updated $SETTINGS_FILE (backup at ${SETTINGS_FILE}.bak)."
     echo "Hooks point to:"
     echo "  PreToolUse:   $ACTIVE_SCRIPT"
-    echo "  Notification: $NOTIFY_SCRIPT (attention), $IDLE_SCRIPT (idle)"
+    echo "  Notification: $NOTIFY_SCRIPT (attention), $STOPPED_SCRIPT (idle)"
     echo "  Stop:         $STOPPED_SCRIPT"
 }
 
