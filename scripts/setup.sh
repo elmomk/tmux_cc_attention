@@ -26,11 +26,20 @@ hook_json() {
     ],
     "Notification": [
       {
-        "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
+        "matcher": "permission_prompt|elicitation_dialog",
         "hooks": [
           {
             "type": "command",
             "command": "$NOTIFY_SCRIPT"
+          }
+        ]
+      },
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$ACTIVE_SCRIPT"
           }
         ]
       }
