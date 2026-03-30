@@ -10,4 +10,5 @@ tmux set-window-option -t "$target" -u window-status-current-format 2>/dev/null
 # Remove all markers
 tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
+tmux set-window-option -t "$target" -u @claude-idle 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null

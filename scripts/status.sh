@@ -11,16 +11,19 @@ att_color=$(tmux show-option -gqv @claude-attention-color)
 att_color="${att_color:-#c4746e}"
 act_color=$(tmux show-option -gqv @claude-active-color)
 act_color="${act_color:-#87a987}"
+idle_color=$(tmux show-option -gqv @claude-idle-color)
+idle_color="${idle_color:-#b6927b}"
 stop_color=$(tmux show-option -gqv @claude-stopped-color)
 stop_color="${stop_color:-#8ba4b0}"
 
 att_count=0
 act_count=0
+idle_count=0
 stop_count=0
 
 # Single pass over all windows
-while IFS='|' read -r sess_name win_idx att act stop; do
-    [ "$att" != "1" ] && [ "$act" != "1" ] && [ "$stop" != "1" ] && continue
+while IFS='|' read -r sess_name win_idx att act idle stop; do
+    [ "$att" != "1" ] && [ "$act" != "1" ] && [ "$idle" != "1" ] && [ "$stop" != "1" ] && continue
 
     target="${sess_name}:${win_idx}"
 
@@ -32,6 +35,7 @@ while IFS='|' read -r sess_name win_idx att act stop; do
             tmux set-window-option -t "$target" -u window-status-current-format 2>/dev/null
             tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
             tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
+            tmux set-window-option -t "$target" -u @claude-idle 2>/dev/null
             tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
         fi
         continue
@@ -44,14 +48,17 @@ while IFS='|' read -r sess_name win_idx att act stop; do
         att_count=$((att_count + 1))
     elif [ "$act" = "1" ]; then
         act_count=$((act_count + 1))
+    elif [ "$idle" = "1" ]; then
+        idle_count=$((idle_count + 1))
     elif [ "$stop" = "1" ]; then
         stop_count=$((stop_count + 1))
     fi
-done < <(tmux list-windows -a -F "#{session_name}|#{window_index}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}" 2>/dev/null)
+done < <(tmux list-windows -a -F "#{session_name}|#{window_index}|#{@claude-attention}|#{@claude-active}|#{@claude-idle}|#{@claude-stopped}" 2>/dev/null)
 
 output=""
 [ "$att_count" -gt 0 ] && output="${output}#[fg=${att_color}]!${att_count} "
 [ "$act_count" -gt 0 ] && output="${output}#[fg=${act_color}]*${act_count} "
+[ "$idle_count" -gt 0 ] && output="${output}#[fg=${idle_color}]~${idle_count} "
 [ "$stop_count" -gt 0 ] && output="${output}#[fg=${stop_color}]-${stop_count} "
 
 echo -n "$output"

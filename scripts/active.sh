@@ -28,6 +28,7 @@ tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/d
 tmux set-window-option -t "$target" @claude-active 1 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
+tmux set-window-option -t "$target" -u @claude-idle 2>/dev/null
 
 # Guard against race: if notify.sh set attention while we were writing,
 # restore the attention format so the window doesn't stay green.
