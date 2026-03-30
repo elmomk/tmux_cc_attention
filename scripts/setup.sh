@@ -84,11 +84,13 @@ check_install() {
         for hook_type in PreToolUse Notification Stop; do
             local count
             count=$(jq -r ".hooks.${hook_type} // [] | length" "$SETTINGS_FILE" 2>/dev/null || echo 0)
+            local expected=1
+            [ "$hook_type" = "Notification" ] && expected=2
             if [ "$count" -eq 0 ]; then
                 echo "FAIL: No $hook_type hooks"
                 ok=false
-            elif [ "$count" -gt 1 ]; then
-                echo "WARN: $hook_type has $count entries (expected 1) — run --apply to fix"
+            elif [ "$count" -gt "$expected" ]; then
+                echo "WARN: $hook_type has $count entries (expected $expected) — run --apply to fix"
                 ok=false
             else
                 echo "  OK: $hook_type"
