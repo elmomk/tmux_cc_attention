@@ -36,11 +36,16 @@ tmux set-option -g @claude-fmt-attention-cur "#[fg=${win_bg},bg=${att_color},bol
 tmux set-option -g @claude-fmt-stopped      "#[fg=${stop_color},bg=${win_bg}] - #I #W "
 tmux set-option -g @claude-fmt-stopped-cur  "#[fg=${win_bg},bg=${stop_color},bold] - #I #W "
 
-# -- Clean up old auto-clear hooks --
-for i in 0 1 2 3 4 5 100; do
+# -- Clean up old hooks --
+for i in 0 1 2 3 4 5; do
     tmux set-hook -gu "session-window-changed[$i]" 2>/dev/null || true
     tmux set-hook -gu "client-session-changed[$i]" 2>/dev/null || true
 done
+
+# -- Auto-clear attention/stopped markers when user focuses a window --
+CLEAR_ON_FOCUS="$CURRENT_DIR/scripts/clear-on-focus.sh"
+tmux set-hook -g "session-window-changed[100]" "run-shell -b '$CLEAR_ON_FOCUS'"
+tmux set-hook -g "client-session-changed[100]" "run-shell -b '$CLEAR_ON_FOCUS'"
 
 # Store plugin path so other scripts can find it
 tmux set-option -g @claude-attention-plugin-path "$CURRENT_DIR"

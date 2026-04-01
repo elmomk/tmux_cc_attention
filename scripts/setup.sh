@@ -108,6 +108,16 @@ check_install() {
     plugin_path=$(tmux show-option -gqv @claude-attention-plugin-path 2>/dev/null || echo "not set")
     echo "  Plugin path: $plugin_path"
 
+    # Verify auto-clear hooks are installed
+    for hook_name in session-window-changed client-session-changed; do
+        if tmux show-hooks -g 2>/dev/null | grep -q "${hook_name}\[100\]"; then
+            echo "  OK: ${hook_name}[100] auto-clear hook"
+        else
+            echo "WARN: ${hook_name}[100] auto-clear hook missing — reload tmux config"
+            ok=false
+        fi
+    done
+
     echo ""
     echo "=== Colors ==="
     echo "  Active:    $(tmux show-option -gqv @claude-active-color 2>/dev/null || echo 'default')"

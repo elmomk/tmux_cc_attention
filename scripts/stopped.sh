@@ -19,13 +19,11 @@ was_active="${rest##*|}"
 fmt=$(tmux show-option -gqv @claude-fmt-stopped)
 fmt_cur=$(tmux show-option -gqv @claude-fmt-stopped-cur)
 
-tmux set-window-option -t "$target" window-status-format "$fmt" 2>/dev/null
-tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/dev/null
-
-# Set stopped marker, clear active and attention
-tmux set-window-option -t "$target" @claude-stopped 1 2>/dev/null
-tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
-tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
+tmux set-window-option -t "$target" window-status-format "$fmt" \; \
+     set-window-option -t "$target" window-status-current-format "$fmt_cur" \; \
+     set-window-option -t "$target" @claude-stopped 1 \; \
+     set-window-option -t "$target" -u @claude-active \; \
+     set-window-option -t "$target" -u @claude-attention 2>/dev/null
 
 # Opt-in done notification: brief inline status-right indicator on active → stopped
 if [ "$was_active" = "1" ]; then
@@ -38,4 +36,14 @@ if [ "$was_active" = "1" ]; then
         (sleep 5 && tmux set-option -gu @claude-done-msg 2>/dev/null) &
         disown
     fi
+fi
+
+# Optional stopped-state auto-expiry: clear marker after N seconds
+timeout=$(tmux show-option -gqv @claude-stopped-timeout)
+if [ -n "$timeout" ] && [ "$timeout" -gt 0 ] 2>/dev/null; then
+    (sleep "$timeout" && \
+     tmux set-window-option -t "$target" -u @claude-stopped \; \
+          set-window-option -t "$target" -u window-status-format \; \
+          set-window-option -t "$target" -u window-status-current-format 2>/dev/null) &
+    disown
 fi

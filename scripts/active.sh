@@ -23,18 +23,18 @@ current_attention="${rest##*|}"
 fmt=$(tmux show-option -gqv @claude-fmt-active)
 fmt_cur=$(tmux show-option -gqv @claude-fmt-active-cur)
 
-tmux set-window-option -t "$target" window-status-format "$fmt" 2>/dev/null
-tmux set-window-option -t "$target" window-status-current-format "$fmt_cur" 2>/dev/null
-tmux set-window-option -t "$target" @claude-active 1 2>/dev/null
-tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
-tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
+tmux set-window-option -t "$target" window-status-format "$fmt" \; \
+     set-window-option -t "$target" window-status-current-format "$fmt_cur" \; \
+     set-window-option -t "$target" @claude-active 1 \; \
+     set-window-option -t "$target" -u @claude-stopped \; \
+     set-window-option -t "$target" -u @claude-attention 2>/dev/null
 
 # Guard against race: if notify.sh set attention while we were writing,
 # restore the attention format so the window doesn't stay green.
 if [ "$(tmux show-window-option -t "$target" -v @claude-attention 2>/dev/null)" = "1" ]; then
     att_fmt=$(tmux show-option -gqv @claude-fmt-attention)
     att_fmt_cur=$(tmux show-option -gqv @claude-fmt-attention-cur)
-    tmux set-window-option -t "$target" window-status-format "$att_fmt" 2>/dev/null
-    tmux set-window-option -t "$target" window-status-current-format "$att_fmt_cur" 2>/dev/null
-    tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
+    tmux set-window-option -t "$target" window-status-format "$att_fmt" \; \
+         set-window-option -t "$target" window-status-current-format "$att_fmt_cur" \; \
+         set-window-option -t "$target" -u @claude-active 2>/dev/null
 fi

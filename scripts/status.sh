@@ -6,6 +6,21 @@
 
 current_session=$(tmux display-message -p '#{session_name}' 2>/dev/null) || exit 0
 
+# Collect all marked windows in one pass
+all_windows=$(tmux list-windows -a -F '#{session_name}|#{window_index}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}' 2>/dev/null)
+
+# Early exit: no windows at all
+[ -z "$all_windows" ] && exit 0
+
+# Check if any window has markers — skip everything if none do
+if ! grep -qE '\|1' <<< "$all_windows"; then
+    exit 0
+fi
+
+# Build lookup set of windows running Claude (single list-panes -a call)
+claude_set=$(tmux list-panes -a -F '#{session_name}:#{window_index}|#{pane_current_command}' 2>/dev/null \
+    | grep -iE 'claude(-code)?$' | cut -d'|' -f1 | sort -u)
+
 # Read colors
 att_color=$(tmux show-option -gqv @claude-attention-color)
 att_color="${att_color:-#c4746e}"
@@ -18,22 +33,18 @@ att_count=0
 act_count=0
 stop_count=0
 
-# Single pass over all windows
 while IFS='|' read -r sess_name win_idx att act stop; do
     [ "$att" != "1" ] && [ "$act" != "1" ] && [ "$stop" != "1" ] && continue
 
     target="${sess_name}:${win_idx}"
 
-    # Check if any pane in this window is still running claude
-    if ! tmux list-panes -t "$target" -F '#{pane_current_command}' 2>/dev/null | grep -qiE '^claude(-code)?$'; then
-        # Re-verify before clearing (close TOCTOU window)
-        if ! tmux list-panes -t "$target" -F '#{pane_current_command}' 2>/dev/null | grep -qiE '^claude(-code)?$'; then
-            tmux set-window-option -t "$target" -u window-status-format 2>/dev/null
-            tmux set-window-option -t "$target" -u window-status-current-format 2>/dev/null
-            tmux set-window-option -t "$target" -u @claude-attention 2>/dev/null
-            tmux set-window-option -t "$target" -u @claude-active 2>/dev/null
-            tmux set-window-option -t "$target" -u @claude-stopped 2>/dev/null
-        fi
+    # Check if Claude is still running in this window (lookup, no subprocess)
+    if ! grep -qF "$target" <<< "$claude_set"; then
+        tmux set-window-option -t "$target" -u window-status-format \; \
+             set-window-option -t "$target" -u window-status-current-format \; \
+             set-window-option -t "$target" -u @claude-attention \; \
+             set-window-option -t "$target" -u @claude-active \; \
+             set-window-option -t "$target" -u @claude-stopped 2>/dev/null
         continue
     fi
 
@@ -47,7 +58,7 @@ while IFS='|' read -r sess_name win_idx att act stop; do
     elif [ "$stop" = "1" ]; then
         stop_count=$((stop_count + 1))
     fi
-done < <(tmux list-windows -a -F "#{session_name}|#{window_index}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}" 2>/dev/null)
+done <<< "$all_windows"
 
 output=""
 [ "$att_count" -gt 0 ] && output="${output}#[fg=${att_color}]!${att_count} "
