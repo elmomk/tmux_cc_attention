@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Sessions popup — fzf-based dashboard + quick switcher.
-# Runs inside `tmux display-popup -E`. Shows all Claude windows with
-# state icons, previews pane content, and switches to the selected window.
+# Groups windows by session with headers. Shows state icons and
+# previews pane content. Switches to selected window on enter.
 
 if ! command -v fzf >/dev/null 2>&1; then
     echo "fzf is required for the Claude Sessions popup."
@@ -29,6 +29,7 @@ ansi_act=$(hex_to_ansi "$act_color")
 ansi_stop=$(hex_to_ansi "$stop_color")
 ansi_reset=$'\033[0m'
 ansi_dim=$'\033[2m'
+ansi_bold=$'\033[1m'
 
 # Build a set of windows that have a Claude pane (list-panes is authoritative)
 declare -A claude_windows
@@ -38,8 +39,9 @@ while IFS='|' read -r sess win_idx cmd; do
     fi
 done < <(tmux list-panes -a -F '#{session_name}|#{window_index}|#{pane_current_command}' 2>/dev/null)
 
-# Collect formatted lines for Claude windows
-lines=()
+# Collect windows grouped by session
+declare -A session_lines
+session_order=()
 while IFS='|' read -r sess win_idx win_name att act stop; do
     target="${sess}:${win_idx}"
     [ -z "${claude_windows[$target]+_}" ] && continue
@@ -58,23 +60,39 @@ while IFS='|' read -r sess win_idx win_name att act stop; do
         label="${ansi_dim}no state${ansi_reset}"
     fi
 
-    lines+=("$(printf '%b %-16s %-14s (%b)' "$icon" "$target" "$win_name" "$label")")
+    line="$(printf '%b %-18s %-14s (%b)' "$icon" "$target" "$win_name" "$label")"
+
+    if [ -z "${session_lines[$sess]+_}" ]; then
+        session_order+=("$sess")
+    fi
+    session_lines[$sess]+="${line}"$'\n'
 done < <(tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{@claude-attention}|#{@claude-active}|#{@claude-stopped}' 2>/dev/null)
 
-if [ ${#lines[@]} -eq 0 ]; then
+if [ ${#session_order[@]} -eq 0 ]; then
     echo "No Claude sessions found."
     sleep 2
     exit 0
 fi
 
+# Build output with session headers (non-selectable in fzf via --delimiter trick)
+output=""
+for sess in "${session_order[@]}"; do
+    count=$(echo -n "${session_lines[$sess]}" | grep -c '^')
+    output+="${ansi_bold}${ansi_dim}── ${sess} (${count}) ──${ansi_reset}"$'\n'
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        output+="  ${line}"$'\n'
+    done <<< "${session_lines[$sess]}"
+done
+
 # Pipe to fzf
-selected=$(printf '%s\n' "${lines[@]}" | fzf --ansi --no-sort \
+selected=$(printf '%s' "$output" | fzf --ansi --no-sort \
     --header='Claude Sessions — enter to switch, esc to cancel' \
-    --preview='target=$(echo {} | sed "s/^.\{2\}//" | awk "{print \$1}"); tmux capture-pane -ep -t "$target" 2>/dev/null' \
+    --preview='target=$(echo {} | sed "s/^.\{4\}//" | awk "{print \$1}"); tmux capture-pane -ep -t "$target" 2>/dev/null' \
     --preview-window='right:40%')
 
 [ -z "$selected" ] && exit 0
 
-# Extract target (session:window) from the selected line
-target=$(echo "$selected" | sed 's/^.\{2\}//' | awk '{print $1}')
+# Extract target (session:window) — skip leading "  X " (indent + icon + space)
+target=$(echo "$selected" | sed 's/^.\{4\}//' | awk '{print $1}')
 [ -n "$target" ] && tmux switch-client -t "$target" 2>/dev/null

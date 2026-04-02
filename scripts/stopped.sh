@@ -41,9 +41,15 @@ fi
 # Optional stopped-state auto-expiry: clear marker after N seconds
 timeout=$(tmux show-option -gqv @claude-stopped-timeout)
 if [ -n "$timeout" ] && [ "$timeout" -gt 0 ] 2>/dev/null; then
+    SCRIPT_DIR="$(dirname "$0")"
     (sleep "$timeout" && \
      tmux set-window-option -t "$target" -u @claude-stopped \; \
           set-window-option -t "$target" -u window-status-format \; \
-          set-window-option -t "$target" -u window-status-current-format 2>/dev/null) &
+          set-window-option -t "$target" -u window-status-current-format 2>/dev/null && \
+     "$SCRIPT_DIR/refresh-counts.sh") &
+    disown
+else
+    # Push-update cross-session counts
+    "$(dirname "$0")/refresh-counts.sh" &
     disown
 fi

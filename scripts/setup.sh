@@ -119,6 +119,15 @@ check_install() {
     done
 
     echo ""
+    echo "=== Optional Features ==="
+    local auto_name
+    auto_name=$(tmux show-option -gqv @claude-auto-name 2>/dev/null || echo "off")
+    echo "  Auto-name windows: $auto_name  (set @claude-auto-name 'on' to enable)"
+    local nav_keys
+    nav_keys=$(tmux show-option -gqv @claude-nav-keys 2>/dev/null || echo "off")
+    echo "  Prefix-less nav:   $nav_keys  (set @claude-nav-keys 'on' to enable)"
+
+    echo ""
     echo "=== Colors ==="
     echo "  Active:    $(tmux show-option -gqv @claude-active-color 2>/dev/null || echo 'default')"
     echo "  Attention: $(tmux show-option -gqv @claude-attention-color 2>/dev/null || echo 'default')"

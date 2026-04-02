@@ -38,3 +38,7 @@ if [ "$(tmux show-window-option -t "$target" -v @claude-attention 2>/dev/null)" 
          set-window-option -t "$target" window-status-current-format "$att_fmt_cur" \; \
          set-window-option -t "$target" -u @claude-active 2>/dev/null
 fi
+
+# Push-update cross-session counts
+"$(dirname "$0")/refresh-counts.sh" &
+disown

@@ -35,3 +35,7 @@ if [ "$desktop" = "on" ]; then
         osascript -e "display notification \"$target\" with title \"Claude needs input\""
     fi
 fi
+
+# Push-update cross-session counts
+"$(dirname "$0")/refresh-counts.sh" &
+disown

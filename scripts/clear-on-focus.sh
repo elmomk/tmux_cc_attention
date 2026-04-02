@@ -23,3 +23,7 @@ elif [ "$stop" = "1" ]; then
          set-window-option -t "$target" -u window-status-current-format \; \
          set-window-option -t "$target" -u @claude-stopped 2>/dev/null
 fi
+
+# Push-update cross-session counts
+"$(dirname "$0")/refresh-counts.sh" &
+disown
