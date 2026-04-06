@@ -94,7 +94,7 @@ if [ "$nav_keys" = "on" ]; then
     for i in 1 2 3 4 5 6 7 8 9; do
         tmux bind-key -n "M-$i" select-window -t ":$i"
     done
-    tmux bind-key -n M-0 select-window -t ":10"
+    tmux bind-key -n M-0 select-window -t ":0"
 
     # M-H / M-L: previous/next session
     tmux bind-key -n M-H switch-client -p
