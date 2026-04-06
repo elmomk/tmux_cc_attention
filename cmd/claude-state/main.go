@@ -8,6 +8,7 @@
 //	claude-state stopped        Mark current window as idle/done (blue)
 //	claude-state clear          Clear attention/stopped on current window
 //	claude-state notify         Send desktop notification + mark attention
+//	claude-state status         Query daemon state as JSON
 //
 // Client commands read $TMUX and $TMUX_PANE, resolve the session:window target,
 // and send a single message over the unix socket. If the daemon isn't running,
@@ -33,31 +34,30 @@ import (
 )
 
 const (
-	replaceID      = "99999"
-	notifyTimeout  = "30000"
-	idleTimeout    = 10 * time.Minute
-	readTimeout    = 2 * time.Second
-	donePopupSec   = 5
-	maxWindows     = 500  // cap tracked windows to prevent memory exhaustion
-	maxConnections = 50   // concurrent socket connections
-	maxFieldLen    = 128  // max length for session/window/pane fields
+	replaceID        = "99999"
+	notifyTimeout    = "30000"
+	idleTimeout      = 10 * time.Minute
+	readTimeout      = 2 * time.Second
+	donePopupSec     = 5
+	maxWindows       = 500
+	maxConnections   = 50
+	maxNotifyHistory = 200
+	saveDebounce     = time.Second
 )
 
 var (
-	// Per-user socket/pid in XDG_RUNTIME_DIR (falls back to /tmp/claude-state-$UID)
 	socketPath = runtimePath("claude-state.sock")
 	pidFile    = runtimePath("claude-state.pid")
+	statePath  = runtimePath("claude-state.json")
 
-	// Input validation: session names, window indices, pane IDs.
-	// SECURITY: validName must never allow single-quote (') — the PowerShell
-	// notification path relies on this for injection prevention.
+	// SECURITY: validName must never allow single-quote (') — PowerShell injection prevention.
 	validName       = regexp.MustCompile(`^[a-zA-Z0-9_./-]{1,128}$`)
 	validDigits     = regexp.MustCompile(`^[0-9]{1,10}$`)
 	validPaneID     = regexp.MustCompile(`^%[0-9]{1,10}$`)
 	validTmuxSocket = regexp.MustCompile(`^/[a-zA-Z0-9/_.-]+,\d+,\d+$`)
 	validTypes      = map[string]bool{
 		"active": true, "attention": true, "stopped": true,
-		"clear": true, "notify": true,
+		"clear": true, "notify": true, "status": true,
 	}
 )
 
@@ -75,7 +75,6 @@ func ensureRuntimeDir() {
 // ── Client mode ──
 
 func clientMain(msgType string) {
-	// Drain stdin so Claude Code hook doesn't block
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -90,14 +89,12 @@ func clientMain(msgType string) {
 	if tmuxSocket == "" {
 		os.Exit(0)
 	}
-	// TMUX_PANE may be empty for clear (tmux run-shell context)
 	if paneID == "" && msgType != "clear" {
 		os.Exit(0)
 	}
 
 	var info string
 	if msgType == "clear" {
-		// Clear operates on the currently focused window (no TMUX_PANE needed)
 		info = tmuxGetFormat("#{session_name}|#{window_index}|#{pane_index}")
 	} else {
 		info = tmuxDisplayPane(paneID, "#{session_name}|#{window_index}|#{pane_index}")
@@ -118,7 +115,6 @@ func clientMain(msgType string) {
 		req.PaneIdx = parts[2]
 	}
 
-	// For notify: resolve Hyprland context and skip if already focused
 	if msgType == "notify" {
 		if skip := resolveHyprland(&req, paneID); skip {
 			os.Exit(0)
@@ -129,8 +125,23 @@ func clientMain(msgType string) {
 	sendRequest(&req)
 }
 
-// resolveHyprland gathers Hyprland workspace/window info for click-to-focus.
-// Returns true if the user is already focused on this pane (skip notification).
+func statusMain() {
+	ensureDaemon()
+	conn, err := net.DialTimeout("unix", socketPath, time.Second)
+	if err != nil {
+		log.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	data, _ := json.Marshal(&request{Type: "status"})
+	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	conn.Write(data)
+	conn.(*net.UnixConn).CloseWrite()
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	io.Copy(os.Stdout, conn)
+}
+
 func resolveHyprland(req *request, paneID string) bool {
 	if _, err := exec.LookPath("hyprctl"); err != nil {
 		return false
@@ -141,7 +152,6 @@ func resolveHyprland(req *request, paneID string) bool {
 		return false
 	}
 
-	// Walk parent PIDs to find the Hyprland window
 	chain := termPID
 	for range 5 {
 		parent := strings.TrimSpace(cmdOutput("ps", "-o", "ppid=", "-p", chain))
@@ -165,7 +175,6 @@ func resolveHyprland(req *request, paneID string) bool {
 		chain = parent
 	}
 
-	// Check if user is already focused on this exact pane
 	if req.WindowAddr != "" {
 		activeJSON := cmdOutput("hyprctl", "activewindow", "-j")
 		if activeJSON != "" {
@@ -188,7 +197,7 @@ func resolveHyprland(req *request, paneID string) bool {
 func ensureDaemon() {
 	ensureRuntimeDir()
 	if _, err := os.Stat(socketPath); err == nil {
-		return // socket exists, daemon likely running
+		return
 	}
 
 	self, err := os.Executable()
@@ -253,6 +262,9 @@ func (r *request) validate() bool {
 	if !validTypes[r.Type] {
 		return false
 	}
+	if r.Type == "status" {
+		return true // no target fields needed
+	}
 	if r.Session == "" || !validName.MatchString(r.Session) {
 		return false
 	}
@@ -268,7 +280,7 @@ func (r *request) validate() bool {
 	return true
 }
 
-// ── Daemon ──
+// ── Daemon types ──
 
 type windowState int
 
@@ -279,9 +291,125 @@ const (
 	stateStopped
 )
 
-type trackedWindow struct {
-	state windowState
+func (s windowState) String() string {
+	switch s {
+	case stateActive:
+		return "active"
+	case stateAttention:
+		return "attention"
+	case stateStopped:
+		return "stopped"
+	default:
+		return "none"
+	}
 }
+
+func parseState(s string) windowState {
+	switch s {
+	case "active":
+		return stateActive
+	case "attention":
+		return stateAttention
+	case "stopped":
+		return stateStopped
+	default:
+		return stateNone
+	}
+}
+
+type trackedWindow struct {
+	state       windowState
+	paneID      string
+	tmuxSocket  string
+	activeSince *time.Time    // when current active interval started
+	attSince    *time.Time    // when current attention interval started
+	totalActive time.Duration // accumulated active time
+	totalAtt    time.Duration // accumulated attention time
+}
+
+// finalizeInterval closes any open timer interval. Caller must hold d.mu.
+func (tw *trackedWindow) finalizeInterval(now time.Time) {
+	if tw.activeSince != nil {
+		tw.totalActive += now.Sub(*tw.activeSince)
+		tw.activeSince = nil
+	}
+	if tw.attSince != nil {
+		tw.totalAtt += now.Sub(*tw.attSince)
+		tw.attSince = nil
+	}
+}
+
+func (tw *trackedWindow) currentActiveDur(now time.Time) time.Duration {
+	d := tw.totalActive
+	if tw.activeSince != nil {
+		d += now.Sub(*tw.activeSince)
+	}
+	return d
+}
+
+func (tw *trackedWindow) currentAttDur(now time.Time) time.Duration {
+	d := tw.totalAtt
+	if tw.attSince != nil {
+		d += now.Sub(*tw.attSince)
+	}
+	return d
+}
+
+type notifyRecord struct {
+	Time        time.Time  `json:"time"`
+	Target      string     `json:"target"`
+	Session     string     `json:"session"`
+	Window      string     `json:"window"`
+	Responded   bool       `json:"responded"`
+	RespondedAt *time.Time `json:"responded_at,omitempty"`
+}
+
+// ── Persistence types ──
+
+type persistedState struct {
+	Version       int                        `json:"version"`
+	SavedAt       time.Time                  `json:"saved_at"`
+	Windows       map[string]persistedWindow `json:"windows"`
+	Notifications []notifyRecord             `json:"notifications"`
+}
+
+type persistedWindow struct {
+	State          string         `json:"state"`
+	PaneID         string         `json:"pane_id,omitempty"`
+	TmuxSocket     string         `json:"tmux_socket,omitempty"`
+	ActiveSince    *time.Time     `json:"active_since,omitempty"`
+	AttentionSince *time.Time     `json:"attention_since,omitempty"`
+	TotalActiveMs  int64          `json:"total_active_ms"`
+	TotalAttMs     int64          `json:"total_attention_ms"`
+}
+
+// ── Status API types ──
+
+type statusResponse struct {
+	OK            bool                     `json:"ok"`
+	Uptime        string                   `json:"uptime"`
+	WindowCount   int                      `json:"window_count"`
+	Windows       map[string]windowStatus  `json:"windows"`
+	Notifications []notifyRecord           `json:"notifications"`
+	Counts        statusCounts             `json:"counts"`
+}
+
+type windowStatus struct {
+	State             string     `json:"state"`
+	PaneID            string     `json:"pane_id,omitempty"`
+	ActiveDuration    string     `json:"active_duration"`
+	AttentionDuration string     `json:"attention_duration"`
+	ActiveSince       *time.Time `json:"active_since,omitempty"`
+	AttentionSince    *time.Time `json:"attention_since,omitempty"`
+}
+
+type statusCounts struct {
+	Active    int `json:"active"`
+	Attention int `json:"attention"`
+	Stopped   int `json:"stopped"`
+}
+
+// ── Formats ──
 
 type formats struct {
 	once                            sync.Once
@@ -312,15 +440,20 @@ func optionOr(name, fallback string) string {
 	return fallback
 }
 
+// ── Daemon ──
+
 type daemon struct {
-	mu           sync.Mutex
-	windows      map[string]*trackedWindow
-	fmt          formats
-	notifyCmd    *exec.Cmd
-	doneTimer    *time.Timer
-	lastActivity time.Time
-	listener     net.Listener
-	done         chan struct{}
+	mu            sync.Mutex
+	windows       map[string]*trackedWindow
+	notifications []notifyRecord
+	fmt           formats
+	notifyCmd     *exec.Cmd
+	doneTimer     *time.Timer
+	saveTimer     *time.Timer
+	startTime     time.Time
+	lastActivity  time.Time
+	listener      net.Listener
+	done          chan struct{}
 }
 
 func (d *daemon) getOrCreate(target string) *trackedWindow {
@@ -361,6 +494,16 @@ func (d *daemon) handleConn(conn net.Conn) {
 	d.mu.Unlock()
 
 	d.fmt.load()
+
+	// Status returns a larger response
+	if req.Type == "status" {
+		resp := d.buildStatusResponse()
+		out, _ := json.MarshalIndent(resp, "", "  ")
+		conn.Write(out)
+		conn.Write([]byte("\n"))
+		return
+	}
+
 	d.dispatch(&req)
 	conn.Write([]byte("{\"ok\":true}\n"))
 }
@@ -385,6 +528,7 @@ func (d *daemon) dispatch(req *request) {
 
 func (d *daemon) setActive(req *request) {
 	target := req.target()
+	now := time.Now()
 
 	d.mu.Lock()
 	tw := d.getOrCreate(target)
@@ -393,7 +537,11 @@ func (d *daemon) setActive(req *request) {
 		return
 	}
 
+	tw.finalizeInterval(now)
 	tw.state = stateActive
+	tw.activeSince = &now
+	tw.paneID = req.PaneID
+	tw.tmuxSocket = req.TmuxSocket
 	d.mu.Unlock()
 
 	tmux(
@@ -418,10 +566,12 @@ func (d *daemon) setActive(req *request) {
 	}
 
 	d.refreshCounts()
+	d.scheduleSave()
 }
 
 func (d *daemon) setAttention(req *request) {
 	target := req.target()
+	now := time.Now()
 
 	d.mu.Lock()
 	tw := d.getOrCreate(target)
@@ -430,7 +580,11 @@ func (d *daemon) setAttention(req *request) {
 		return
 	}
 
+	tw.finalizeInterval(now)
 	tw.state = stateAttention
+	tw.attSince = &now
+	tw.paneID = req.PaneID
+	tw.tmuxSocket = req.TmuxSocket
 	d.mu.Unlock()
 
 	tmux(
@@ -446,10 +600,12 @@ func (d *daemon) setAttention(req *request) {
 	}
 
 	d.refreshCounts()
+	d.scheduleSave()
 }
 
 func (d *daemon) setStopped(req *request) {
 	target := req.target()
+	now := time.Now()
 
 	d.mu.Lock()
 	tw := d.getOrCreate(target)
@@ -459,6 +615,7 @@ func (d *daemon) setStopped(req *request) {
 	}
 	wasActive := tw.state == stateActive
 
+	tw.finalizeInterval(now)
 	tw.state = stateStopped
 	d.mu.Unlock()
 
@@ -489,12 +646,13 @@ func (d *daemon) setStopped(req *request) {
 			go func() {
 				time.Sleep(time.Duration(timeout) * time.Second)
 				d.mu.Lock()
-				tw := d.windows[target]
-				if tw != nil && tw.state == stateStopped {
-					tw.state = stateNone
+				current := d.windows[target]
+				if current != nil && current.state == stateStopped {
+					current.state = stateNone
 					d.mu.Unlock()
 					tmuxUnsetWindow(target)
 					d.refreshCounts()
+					d.scheduleSave()
 				} else {
 					d.mu.Unlock()
 				}
@@ -503,10 +661,12 @@ func (d *daemon) setStopped(req *request) {
 	}
 
 	d.refreshCounts()
+	d.scheduleSave()
 }
 
 func (d *daemon) clearWindow(req *request) {
 	target := req.target()
+	now := time.Now()
 
 	d.mu.Lock()
 	tw := d.windows[target]
@@ -515,7 +675,17 @@ func (d *daemon) clearWindow(req *request) {
 		return
 	}
 
+	tw.finalizeInterval(now)
 	tw.state = stateNone
+
+	// Mark most recent unresponded notification for this target as responded
+	for i := len(d.notifications) - 1; i >= 0; i-- {
+		if d.notifications[i].Target == target && !d.notifications[i].Responded {
+			d.notifications[i].Responded = true
+			d.notifications[i].RespondedAt = &now
+			break
+		}
+	}
 	d.mu.Unlock()
 
 	tmux(
@@ -526,6 +696,7 @@ func (d *daemon) clearWindow(req *request) {
 	)
 
 	d.refreshCounts()
+	d.scheduleSave()
 }
 
 // ── Cross-session counts ──
@@ -583,27 +754,54 @@ func (d *daemon) staleCleanupLoop() {
 
 func (d *daemon) cleanupStale() {
 	out, err := exec.Command("tmux", "list-panes", "-a",
-		"-F", "#{session_name}:#{window_index}|#{pane_current_command}").Output()
+		"-F", "#{session_name}:#{window_index}|#{pane_current_command}|#{pane_pid}").Output()
 	if err != nil {
 		return
 	}
 
-	claudeWindows := make(map[string]bool)
+	type paneInfo struct {
+		pid string
+	}
+	claudeWindows := make(map[string]paneInfo)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if k, cmd, ok := strings.Cut(line, "|"); ok {
-			lower := strings.ToLower(cmd)
-			if lower == "claude" || lower == "claude-code" {
-				claudeWindows[k] = true
-			}
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		lower := strings.ToLower(parts[1])
+		if lower == "claude" || lower == "claude-code" {
+			claudeWindows[parts[0]] = paneInfo{pid: parts[2]}
 		}
 	}
 
+	now := time.Now()
 	d.mu.Lock()
+
+	// Remove stale: tracked but Claude no longer running
 	var stale []string
 	for target, tw := range d.windows {
-		if tw.state != stateNone && !claudeWindows[target] {
+		if tw.state != stateNone && claudeWindows[target].pid == "" {
 			stale = append(stale, target)
+			tw.finalizeInterval(now)
 			tw.state = stateNone
+		}
+	}
+
+	// Discover: Claude running but not tracked (e.g., daemon restarted without state file,
+	// or Claude started before hooks were configured). Mark as stopped (safest default).
+	var discovered []string
+	for target := range claudeWindows {
+		tw := d.windows[target]
+		if tw == nil || tw.state == stateNone {
+			if len(d.windows) >= maxWindows {
+				break
+			}
+			if tw == nil {
+				tw = &trackedWindow{}
+				d.windows[target] = tw
+			}
+			tw.state = stateStopped
+			discovered = append(discovered, target)
 		}
 	}
 	d.mu.Unlock()
@@ -612,14 +810,41 @@ func (d *daemon) cleanupStale() {
 		log.Printf("stale: %s", target)
 		tmuxUnsetWindow(target)
 	}
-	if len(stale) > 0 {
+
+	for _, target := range discovered {
+		log.Printf("discovered: %s", target)
+		tmux(
+			"set-window-option", "-t", target, "window-status-format", d.fmt.stopped, ";",
+			"set-window-option", "-t", target, "window-status-current-format", d.fmt.stoppedCur, ";",
+			"set-window-option", "-t", target, "@claude-stopped", "1", ";",
+			"set-window-option", "-t", target, "-u", "@claude-active", ";",
+			"set-window-option", "-t", target, "-u", "@claude-attention",
+		)
+	}
+
+	if len(stale) > 0 || len(discovered) > 0 {
 		d.refreshCounts()
+		d.scheduleSave()
 	}
 }
 
 // ── Desktop notifications ──
 
 func (d *daemon) sendDesktopNotification(req *request) {
+	// Record notification
+	now := time.Now()
+	d.mu.Lock()
+	d.notifications = append(d.notifications, notifyRecord{
+		Time:    now,
+		Target:  req.target(),
+		Session: req.Session,
+		Window:  req.Window,
+	})
+	if len(d.notifications) > maxNotifyHistory {
+		d.notifications = d.notifications[len(d.notifications)-maxNotifyHistory:]
+	}
+	d.mu.Unlock()
+
 	d.killNotify()
 
 	body := fmt.Sprintf("Session: %s, Window: %s, Pane: %s", req.Session, req.Window, req.PaneIdx)
@@ -639,7 +864,6 @@ func (d *daemon) sendDesktopNotification(req *request) {
 	}
 }
 
-// runNotifyCmd registers cmd as the active notification, runs it, and clears it.
 func (d *daemon) runNotifyCmd(cmd *exec.Cmd) ([]byte, error) {
 	d.mu.Lock()
 	d.notifyCmd = cmd
@@ -673,10 +897,7 @@ func (d *daemon) notifyLinux(req *request, body string) {
 }
 
 func (d *daemon) notifyWindows(body string) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive",
-		"-File", "-",
-	)
-	// Pass script via stdin to avoid argument injection
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-File", "-")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf(`
 $title = 'Claude Code needs attention'
 $body = '%s'
@@ -733,6 +954,192 @@ func (d *daemon) focusWindow(req *request) {
 	}
 }
 
+// ── Status API ──
+
+func (d *daemon) buildStatusResponse() statusResponse {
+	now := time.Now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	resp := statusResponse{
+		OK:          true,
+		Uptime:      now.Sub(d.startTime).Truncate(time.Second).String(),
+		WindowCount: len(d.windows),
+		Windows:     make(map[string]windowStatus, len(d.windows)),
+	}
+
+	for target, tw := range d.windows {
+		if tw.state == stateNone {
+			continue
+		}
+		ws := windowStatus{
+			State:             tw.state.String(),
+			PaneID:            tw.paneID,
+			ActiveDuration:    tw.currentActiveDur(now).Truncate(time.Second).String(),
+			AttentionDuration: tw.currentAttDur(now).Truncate(time.Second).String(),
+			ActiveSince:       tw.activeSince,
+			AttentionSince:    tw.attSince,
+		}
+		resp.Windows[target] = ws
+
+		switch tw.state {
+		case stateActive:
+			resp.Counts.Active++
+		case stateAttention:
+			resp.Counts.Attention++
+		case stateStopped:
+			resp.Counts.Stopped++
+		}
+	}
+
+	// Return last 50 notifications in the status response
+	if len(d.notifications) > 50 {
+		resp.Notifications = d.notifications[len(d.notifications)-50:]
+	} else {
+		resp.Notifications = d.notifications
+	}
+
+	return resp
+}
+
+// ── Persistence ──
+
+func (d *daemon) saveState() {
+	d.mu.Lock()
+	ps := persistedState{
+		Version:       1,
+		SavedAt:       time.Now(),
+		Windows:       make(map[string]persistedWindow, len(d.windows)),
+		Notifications: d.notifications,
+	}
+	for target, tw := range d.windows {
+		if tw.state == stateNone {
+			continue
+		}
+		ps.Windows[target] = persistedWindow{
+			State:          tw.state.String(),
+			PaneID:         tw.paneID,
+			TmuxSocket:     tw.tmuxSocket,
+			ActiveSince:    tw.activeSince,
+			AttentionSince: tw.attSince,
+			TotalActiveMs:  tw.totalActive.Milliseconds(),
+			TotalAttMs:     tw.totalAtt.Milliseconds(),
+		}
+	}
+	d.mu.Unlock()
+
+	data, err := json.MarshalIndent(ps, "", "  ")
+	if err != nil {
+		log.Printf("marshal state: %v", err)
+		return
+	}
+
+	tmp := statePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		log.Printf("write state: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, statePath); err != nil {
+		log.Printf("rename state: %v", err)
+	}
+}
+
+func (d *daemon) loadState() {
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return // no state file, fresh start
+	}
+
+	var ps persistedState
+	if err := json.Unmarshal(data, &ps); err != nil {
+		log.Printf("load state: %v", err)
+		return
+	}
+
+	if ps.Version != 1 {
+		log.Printf("unknown state version %d, ignoring", ps.Version)
+		return
+	}
+
+	d.mu.Lock()
+	for target, pw := range ps.Windows {
+		state := parseState(pw.State)
+		if state == stateNone {
+			continue
+		}
+		tw := &trackedWindow{
+			state:       state,
+			paneID:      pw.PaneID,
+			tmuxSocket:  pw.TmuxSocket,
+			activeSince: pw.ActiveSince,
+			attSince:    pw.AttentionSince,
+			totalActive: time.Duration(pw.TotalActiveMs) * time.Millisecond,
+			totalAtt:    time.Duration(pw.TotalAttMs) * time.Millisecond,
+		}
+		d.windows[target] = tw
+	}
+	d.notifications = ps.Notifications
+	if len(d.notifications) > maxNotifyHistory {
+		d.notifications = d.notifications[len(d.notifications)-maxNotifyHistory:]
+	}
+	d.mu.Unlock()
+
+	log.Printf("loaded state: %d windows, %d notifications", len(ps.Windows), len(ps.Notifications))
+}
+
+// applyTmuxMarkers re-applies visual markers for all tracked windows.
+// Called on daemon startup after loading persisted state.
+func (d *daemon) applyTmuxMarkers() {
+	d.mu.Lock()
+	targets := make(map[string]windowState, len(d.windows))
+	for target, tw := range d.windows {
+		if tw.state != stateNone {
+			targets[target] = tw.state
+		}
+	}
+	d.mu.Unlock()
+
+	for target, state := range targets {
+		switch state {
+		case stateActive:
+			tmux(
+				"set-window-option", "-t", target, "window-status-format", d.fmt.active, ";",
+				"set-window-option", "-t", target, "window-status-current-format", d.fmt.activeCur, ";",
+				"set-window-option", "-t", target, "@claude-active", "1", ";",
+				"set-window-option", "-t", target, "-u", "@claude-stopped", ";",
+				"set-window-option", "-t", target, "-u", "@claude-attention",
+			)
+		case stateAttention:
+			tmux(
+				"set-window-option", "-t", target, "window-status-format", d.fmt.attention, ";",
+				"set-window-option", "-t", target, "window-status-current-format", d.fmt.attentionCur, ";",
+				"set-window-option", "-t", target, "@claude-attention", "1", ";",
+				"set-window-option", "-t", target, "-u", "@claude-active", ";",
+				"set-window-option", "-t", target, "-u", "@claude-stopped",
+			)
+		case stateStopped:
+			tmux(
+				"set-window-option", "-t", target, "window-status-format", d.fmt.stopped, ";",
+				"set-window-option", "-t", target, "window-status-current-format", d.fmt.stoppedCur, ";",
+				"set-window-option", "-t", target, "@claude-stopped", "1", ";",
+				"set-window-option", "-t", target, "-u", "@claude-active", ";",
+				"set-window-option", "-t", target, "-u", "@claude-attention",
+			)
+		}
+	}
+}
+
+func (d *daemon) scheduleSave() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.saveTimer != nil {
+		d.saveTimer.Stop()
+	}
+	d.saveTimer = time.AfterFunc(saveDebounce, func() {
+		d.saveState()
+	})
+}
+
 // ── Lifecycle ──
 
 func (d *daemon) idleWatchdog() {
@@ -757,9 +1164,13 @@ func (d *daemon) idleWatchdog() {
 
 func (d *daemon) shutdown() {
 	d.killNotify()
+	d.saveState() // persist before exit
 	d.mu.Lock()
 	if d.doneTimer != nil {
 		d.doneTimer.Stop()
+	}
+	if d.saveTimer != nil {
+		d.saveTimer.Stop()
 	}
 	d.mu.Unlock()
 	if d.listener != nil {
@@ -775,7 +1186,6 @@ func (d *daemon) shutdown() {
 }
 
 func (d *daemon) serve() error {
-	// Set restrictive umask before creating socket (no window of wider access)
 	oldMask := syscall.Umask(0077)
 	var err error
 	d.listener, err = net.Listen("unix", socketPath)
@@ -789,12 +1199,18 @@ func (d *daemon) serve() error {
 	}
 	os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0600)
 
+	d.startTime = time.Now()
+	d.fmt.load()
+	d.loadState()
+	d.applyTmuxMarkers()
+	d.cleanupStale() // immediate stale check on startup
+	d.refreshCounts()
+
 	log.Printf("listening on %s (pid %d)", socketPath, os.Getpid())
 
 	go d.idleWatchdog()
 	go d.staleCleanupLoop()
 
-	// Semaphore limits concurrent connection handlers
 	sem := make(chan struct{}, maxConnections)
 
 	for {
@@ -875,7 +1291,7 @@ func main() {
 	log.SetPrefix("claude-state: ")
 
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: claude-state <serve|active|attention|stopped|clear|notify>\n")
+		fmt.Fprintf(os.Stderr, "usage: claude-state <serve|active|attention|stopped|clear|notify|status>\n")
 		os.Exit(1)
 	}
 
@@ -890,7 +1306,6 @@ func main() {
 		}
 		os.Remove(socketPath)
 
-		// Redirect stdin to /dev/null (daemon never reads it)
 		if null, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0); err == nil {
 			os.Stdin = null
 		}
@@ -911,6 +1326,9 @@ func main() {
 
 	case "active", "attention", "stopped", "clear", "notify":
 		clientMain(os.Args[1])
+
+	case "status":
+		statusMain()
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
