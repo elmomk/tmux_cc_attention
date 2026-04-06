@@ -787,43 +787,47 @@ func (d *daemon) cleanupStale() {
 		}
 	}
 
-	// Discover: Claude running but not tracked. Detect state from pane content.
+	// Discover untracked Claude windows AND re-check stopped ones
+	// (a stopped window may have started working again without hooks firing).
 	type discovery struct {
-		target string
-		state  windowState
+		target   string
+		newState windowState
 	}
 	var discovered []discovery
 	for target := range claudeWindows {
 		tw := d.windows[target]
-		if tw == nil || tw.state == stateNone {
-			if len(d.windows) >= maxWindows {
-				break
-			}
+		if tw == nil || tw.state == stateNone || tw.state == stateStopped {
 			if tw == nil {
+				if len(d.windows) >= maxWindows {
+					continue
+				}
 				tw = &trackedWindow{}
 				d.windows[target] = tw
 			}
-			// Detect state from pane content (will be refined after unlock)
-			tw.state = stateStopped // default
 			discovered = append(discovered, discovery{target: target})
 		}
 	}
 	d.mu.Unlock()
 
-	// Detect actual state for discovered windows by inspecting pane content.
-	// "Esc to cancel" = permission prompt (attention). Otherwise stopped (idle).
+	// Detect state from pane content
 	for i, disc := range discovered {
 		content := paneFullContent(disc.target)
-		if isWaitingForInput(content) {
-			discovered[i].state = stateAttention
-			d.mu.Lock()
-			if tw := d.windows[disc.target]; tw != nil {
-				tw.state = stateAttention
-				now := time.Now()
+		detected := detectPaneState(content)
+		discovered[i].newState = detected
+
+		d.mu.Lock()
+		tw := d.windows[disc.target]
+		if tw != nil && tw.state != detected {
+			tw.finalizeInterval(now)
+			tw.state = detected
+			switch detected {
+			case stateActive:
+				tw.activeSince = &now
+			case stateAttention:
 				tw.attSince = &now
 			}
-			d.mu.Unlock()
 		}
+		d.mu.Unlock()
 	}
 
 	for _, target := range stale {
@@ -832,25 +836,8 @@ func (d *daemon) cleanupStale() {
 	}
 
 	for _, disc := range discovered {
-		log.Printf("discovered: %s (%s)", disc.target, disc.state)
-		switch disc.state {
-		case stateAttention:
-			tmux(
-				"set-window-option", "-t", disc.target, "window-status-format", d.fmt.attention, ";",
-				"set-window-option", "-t", disc.target, "window-status-current-format", d.fmt.attentionCur, ";",
-				"set-window-option", "-t", disc.target, "@claude-attention", "1", ";",
-				"set-window-option", "-t", disc.target, "-u", "@claude-active", ";",
-				"set-window-option", "-t", disc.target, "-u", "@claude-stopped",
-			)
-		default:
-			tmux(
-				"set-window-option", "-t", disc.target, "window-status-format", d.fmt.stopped, ";",
-				"set-window-option", "-t", disc.target, "window-status-current-format", d.fmt.stoppedCur, ";",
-				"set-window-option", "-t", disc.target, "@claude-stopped", "1", ";",
-				"set-window-option", "-t", disc.target, "-u", "@claude-active", ";",
-				"set-window-option", "-t", disc.target, "-u", "@claude-attention",
-			)
-		}
+		log.Printf("discovered: %s (%s)", disc.target, disc.newState)
+		d.applyWindowMarker(disc.target, disc.newState)
 	}
 
 	if len(stale) > 0 || len(discovered) > 0 {
@@ -1118,8 +1105,37 @@ func (d *daemon) loadState() {
 	log.Printf("loaded state: %d windows, %d notifications", len(ps.Windows), len(ps.Notifications))
 }
 
+// applyWindowMarker sets tmux visual markers for a single window.
+func (d *daemon) applyWindowMarker(target string, state windowState) {
+	switch state {
+	case stateActive:
+		tmux(
+			"set-window-option", "-t", target, "window-status-format", d.fmt.active, ";",
+			"set-window-option", "-t", target, "window-status-current-format", d.fmt.activeCur, ";",
+			"set-window-option", "-t", target, "@claude-active", "1", ";",
+			"set-window-option", "-t", target, "-u", "@claude-stopped", ";",
+			"set-window-option", "-t", target, "-u", "@claude-attention",
+		)
+	case stateAttention:
+		tmux(
+			"set-window-option", "-t", target, "window-status-format", d.fmt.attention, ";",
+			"set-window-option", "-t", target, "window-status-current-format", d.fmt.attentionCur, ";",
+			"set-window-option", "-t", target, "@claude-attention", "1", ";",
+			"set-window-option", "-t", target, "-u", "@claude-active", ";",
+			"set-window-option", "-t", target, "-u", "@claude-stopped",
+		)
+	case stateStopped:
+		tmux(
+			"set-window-option", "-t", target, "window-status-format", d.fmt.stopped, ";",
+			"set-window-option", "-t", target, "window-status-current-format", d.fmt.stoppedCur, ";",
+			"set-window-option", "-t", target, "@claude-stopped", "1", ";",
+			"set-window-option", "-t", target, "-u", "@claude-active", ";",
+			"set-window-option", "-t", target, "-u", "@claude-attention",
+		)
+	}
+}
+
 // applyTmuxMarkers re-applies visual markers for all tracked windows.
-// Called on daemon startup after loading persisted state.
 func (d *daemon) applyTmuxMarkers() {
 	d.mu.Lock()
 	targets := make(map[string]windowState, len(d.windows))
@@ -1131,32 +1147,7 @@ func (d *daemon) applyTmuxMarkers() {
 	d.mu.Unlock()
 
 	for target, state := range targets {
-		switch state {
-		case stateActive:
-			tmux(
-				"set-window-option", "-t", target, "window-status-format", d.fmt.active, ";",
-				"set-window-option", "-t", target, "window-status-current-format", d.fmt.activeCur, ";",
-				"set-window-option", "-t", target, "@claude-active", "1", ";",
-				"set-window-option", "-t", target, "-u", "@claude-stopped", ";",
-				"set-window-option", "-t", target, "-u", "@claude-attention",
-			)
-		case stateAttention:
-			tmux(
-				"set-window-option", "-t", target, "window-status-format", d.fmt.attention, ";",
-				"set-window-option", "-t", target, "window-status-current-format", d.fmt.attentionCur, ";",
-				"set-window-option", "-t", target, "@claude-attention", "1", ";",
-				"set-window-option", "-t", target, "-u", "@claude-active", ";",
-				"set-window-option", "-t", target, "-u", "@claude-stopped",
-			)
-		case stateStopped:
-			tmux(
-				"set-window-option", "-t", target, "window-status-format", d.fmt.stopped, ";",
-				"set-window-option", "-t", target, "window-status-current-format", d.fmt.stoppedCur, ";",
-				"set-window-option", "-t", target, "@claude-stopped", "1", ";",
-				"set-window-option", "-t", target, "-u", "@claude-active", ";",
-				"set-window-option", "-t", target, "-u", "@claude-attention",
-			)
-		}
+		d.applyWindowMarker(target, state)
 	}
 }
 
@@ -1283,19 +1274,22 @@ func tmuxDisplayPane(paneID, format string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// isWaitingForInput checks if a pane's content indicates Claude is waiting
-// for a permission/elicitation response (attention state).
-// "accept edits on" is the idle input prompt — NOT attention.
-func isWaitingForInput(paneContent string) bool {
-	lines := strings.Split(paneContent, "\n")
-
-	// Look for "Esc to cancel" which appears on permission/elicitation prompts
-	for _, line := range lines {
+// detectPaneState inspects pane content to determine Claude's state.
+//
+// Indicators:
+//   - "esc to interrupt"  → active (Claude is streaming/working)
+//   - "Esc to cancel"     → attention (permission/elicitation prompt)
+//   - otherwise           → stopped (idle at input prompt)
+func detectPaneState(paneContent string) windowState {
+	for _, line := range strings.Split(paneContent, "\n") {
+		if strings.Contains(line, "esc to interrupt") {
+			return stateActive
+		}
 		if strings.Contains(line, "Esc to cancel") {
-			return true
+			return stateAttention
 		}
 	}
-	return false
+	return stateStopped
 }
 
 // paneFullContent captures the full pane content for multi-line analysis.
