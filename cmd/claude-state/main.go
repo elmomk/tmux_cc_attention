@@ -31,11 +31,14 @@ import (
 )
 
 const (
-	replaceID     = "99999"
-	notifyTimeout = "30000"
-	idleTimeout   = 10 * time.Minute
-	readTimeout   = 2 * time.Second
-	donePopupSec  = 5
+	replaceID      = "99999"
+	notifyTimeout  = "30000"
+	idleTimeout    = 10 * time.Minute
+	readTimeout    = 2 * time.Second
+	donePopupSec   = 5
+	maxWindows     = 500  // cap tracked windows to prevent memory exhaustion
+	maxConnections = 50   // concurrent socket connections
+	maxFieldLen    = 128  // max length for session/window/pane fields
 )
 
 var (
@@ -43,10 +46,17 @@ var (
 	socketPath = runtimePath("claude-state.sock")
 	pidFile    = runtimePath("claude-state.pid")
 
-	// Input validation: session names, window indices, pane IDs
-	validName   = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
-	validDigits = regexp.MustCompile(`^[0-9]+$`)
-	validPaneID = regexp.MustCompile(`^%[0-9]+$`)
+	// Input validation: session names, window indices, pane IDs.
+	// SECURITY: validName must never allow single-quote (') — the PowerShell
+	// notification path relies on this for injection prevention.
+	validName       = regexp.MustCompile(`^[a-zA-Z0-9_./-]{1,128}$`)
+	validDigits     = regexp.MustCompile(`^[0-9]{1,10}$`)
+	validPaneID     = regexp.MustCompile(`^%[0-9]{1,10}$`)
+	validTmuxSocket = regexp.MustCompile(`^/[a-zA-Z0-9/_.-]+,\d+,\d+$`)
+	validTypes      = map[string]bool{
+		"active": true, "attention": true, "stopped": true,
+		"clear": true, "notify": true,
+	}
 )
 
 func runtimePath(name string) string {
@@ -237,6 +247,9 @@ func (r *request) target() string {
 }
 
 func (r *request) validate() bool {
+	if !validTypes[r.Type] {
+		return false
+	}
 	if r.Session == "" || !validName.MatchString(r.Session) {
 		return false
 	}
@@ -246,7 +259,7 @@ func (r *request) validate() bool {
 	if r.PaneID != "" && !validPaneID.MatchString(r.PaneID) {
 		return false
 	}
-	if r.TmuxSocket != "" && !strings.HasPrefix(r.TmuxSocket, "/") {
+	if r.TmuxSocket != "" && !validTmuxSocket.MatchString(r.TmuxSocket) {
 		return false
 	}
 	return true
@@ -310,6 +323,9 @@ type daemon struct {
 func (d *daemon) getOrCreate(target string) *trackedWindow {
 	tw, ok := d.windows[target]
 	if !ok {
+		if len(d.windows) >= maxWindows {
+			return nil
+		}
 		tw = &trackedWindow{}
 		d.windows[target] = tw
 	}
@@ -370,7 +386,7 @@ func (d *daemon) setActive(req *request) {
 
 	d.mu.Lock()
 	tw := d.getOrCreate(target)
-	if tw.state == stateActive {
+	if tw == nil || tw.state == stateActive {
 		d.mu.Unlock()
 		return
 	}
@@ -407,6 +423,10 @@ func (d *daemon) setAttention(req *request) {
 
 	d.mu.Lock()
 	tw := d.getOrCreate(target)
+	if tw == nil {
+		d.mu.Unlock()
+		return
+	}
 
 	tw.state = stateAttention
 	d.mu.Unlock()
@@ -431,6 +451,10 @@ func (d *daemon) setStopped(req *request) {
 
 	d.mu.Lock()
 	tw := d.getOrCreate(target)
+	if tw == nil {
+		d.mu.Unlock()
+		return
+	}
 	wasActive := tw.state == stateActive
 
 	tw.state = stateStopped
@@ -747,18 +771,27 @@ func (d *daemon) shutdown() {
 }
 
 func (d *daemon) serve() error {
+	// Set restrictive umask before creating socket (no window of wider access)
+	oldMask := syscall.Umask(0077)
 	var err error
 	d.listener, err = net.Listen("unix", socketPath)
+	syscall.Umask(oldMask)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	os.Chmod(socketPath, 0600)
+	if err := os.Chmod(socketPath, 0600); err != nil {
+		d.listener.Close()
+		return fmt.Errorf("chmod socket: %w", err)
+	}
 	os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0600)
 
 	log.Printf("listening on %s (pid %d)", socketPath, os.Getpid())
 
 	go d.idleWatchdog()
 	go d.staleCleanupLoop()
+
+	// Semaphore limits concurrent connection handlers
+	sem := make(chan struct{}, maxConnections)
 
 	for {
 		conn, err := d.listener.Accept()
@@ -770,7 +803,11 @@ func (d *daemon) serve() error {
 				continue
 			}
 		}
-		go d.handleConn(conn)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			d.handleConn(conn)
+		}()
 	}
 }
 
