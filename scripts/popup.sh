@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Sessions popup — fzf-based dashboard + quick switcher.
-# Groups windows by session with headers. Shows state icons and
-# previews pane content. Switches to selected window on enter.
+# Groups windows by session with headers. Shows state icons, timers,
+# and previews pane content. Switches to selected window on enter.
 
 if ! command -v fzf >/dev/null 2>&1; then
     echo "fzf is required for the Claude Sessions popup."
@@ -9,6 +9,9 @@ if ! command -v fzf >/dev/null 2>&1; then
     sleep 3
     exit 1
 fi
+
+PLUGIN_DIR=$(tmux show-option -gqv @claude-attention-plugin-path)
+PLUGIN_DIR="${PLUGIN_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # Read theme colors for ANSI output
 att_color=$(tmux show-option -gqv @claude-attention-color)
@@ -30,6 +33,26 @@ ansi_stop=$(hex_to_ansi "$stop_color")
 ansi_reset=$'\033[0m'
 ansi_dim=$'\033[2m'
 ansi_bold=$'\033[1m'
+
+# Fetch daemon status for timer info (graceful if unavailable)
+declare -A timer_info
+if [ -x "$PLUGIN_DIR/bin/claude-state" ] && command -v jq >/dev/null 2>&1; then
+    status_json=$("$PLUGIN_DIR/bin/claude-state" status 2>/dev/null)
+    if [ -n "$status_json" ]; then
+        while IFS='|' read -r key active_dur att_dur; do
+            [ -z "$key" ] && continue
+            parts=""
+            if [ -n "$active_dur" ] && [ "$active_dur" != "0s" ]; then
+                parts="active:${active_dur}"
+            fi
+            if [ -n "$att_dur" ] && [ "$att_dur" != "0s" ]; then
+                [ -n "$parts" ] && parts="${parts} "
+                parts="${parts}wait:${att_dur}"
+            fi
+            [ -n "$parts" ] && timer_info["$key"]="$parts"
+        done < <(echo "$status_json" | jq -r '.windows | to_entries[] | "\(.key)|\(.value.active_duration)|\(.value.attention_duration)"')
+    fi
+fi
 
 # Build a set of windows that have a Claude pane (list-panes is authoritative)
 declare -A claude_windows
@@ -60,7 +83,13 @@ while IFS='|' read -r sess win_idx win_name att act stop; do
         label="${ansi_dim}no state${ansi_reset}"
     fi
 
-    line="$(printf '%b %-18s %-14s (%b)' "$icon" "$target" "$win_name" "$label")"
+    # Append timer info if available
+    timer=""
+    if [ -n "${timer_info[$target]+_}" ]; then
+        timer=" ${ansi_dim}[${timer_info[$target]}]${ansi_reset}"
+    fi
+
+    line="$(printf '%b %-18s %-14s (%b)%b' "$icon" "$target" "$win_name" "$label" "$timer")"
 
     if [ -z "${session_lines[$sess]+_}" ]; then
         session_order+=("$sess")
@@ -74,7 +103,7 @@ if [ ${#session_order[@]} -eq 0 ]; then
     exit 0
 fi
 
-# Build output with session headers (non-selectable in fzf via --delimiter trick)
+# Build output with session headers
 output=""
 for sess in "${session_order[@]}"; do
     count=$(echo -n "${session_lines[$sess]}" | grep -c '^')
@@ -85,14 +114,17 @@ for sess in "${session_order[@]}"; do
     done <<< "${session_lines[$sess]}"
 done
 
+# Extract session:window target from a line (handles ANSI codes and variable icon widths)
+strip_ansi='s/\x1b\[[0-9;]*m//g'
+get_target='sed '"'"'s/\x1b\[[0-9;]*m//g'"'"' | grep -oP '"'"'[a-zA-Z0-9_./-]+:[0-9]+'"'"' | head -1'
+
 # Pipe to fzf
 selected=$(printf '%s' "$output" | fzf --ansi --no-sort \
     --header='Claude Sessions — enter to switch, esc to cancel' \
-    --preview='target=$(echo {} | sed "s/^.\{4\}//" | awk "{print \$1}"); tmux capture-pane -ep -t "$target" 2>/dev/null' \
+    --preview="target=\$(echo {} | $get_target); tmux capture-pane -ep -t \"\$target\" 2>/dev/null" \
     --preview-window='right:40%')
 
 [ -z "$selected" ] && exit 0
 
-# Extract target (session:window) — skip leading "  X " (indent + icon + space)
-target=$(echo "$selected" | sed 's/^.\{4\}//' | awk '{print $1}')
+target=$(echo "$selected" | sed "$strip_ansi" | grep -oP '[a-zA-Z0-9_./-]+:[0-9]+' | head -1)
 [ -n "$target" ] && tmux switch-client -t "$target" 2>/dev/null

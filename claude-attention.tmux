@@ -7,8 +7,28 @@
 #   set -g @claude-theme 'kanagawa-dragon'  # optional
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_STATE="$CURRENT_DIR/bin/claude-state"
 
-STATUS_SCRIPT="$CURRENT_DIR/scripts/status.sh"
+# Ensure binary exists: check → download prebuilt → build from source
+if [ ! -x "$CLAUDE_STATE" ]; then
+    mkdir -p "$CURRENT_DIR/bin"
+    _os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    _arch=$(uname -m)
+    case "$_arch" in
+        x86_64)  _arch="amd64" ;;
+        aarch64) _arch="arm64" ;;
+    esac
+    _url="https://github.com/elmomk/tmux_cc_attention/releases/latest/download/claude-state-${_os}-${_arch}"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -o "$CLAUDE_STATE" "$_url" 2>/dev/null && chmod +x "$CLAUDE_STATE"
+    fi
+
+    # Fallback: build from source if download failed
+    if [ ! -x "$CLAUDE_STATE" ] && command -v go >/dev/null 2>&1; then
+        (cd "$CURRENT_DIR" && go build -ldflags="-s -w" -o bin/claude-state ./cmd/claude-state/) 2>/dev/null
+    fi
+fi
 
 # -- Load theme --
 theme=$(tmux show-option -gqv @claude-theme)
@@ -43,24 +63,29 @@ for i in 0 1 2 3 4 5; do
 done
 
 # -- Auto-clear attention/stopped markers when user focuses a window --
-CLEAR_ON_FOCUS="$CURRENT_DIR/scripts/clear-on-focus.sh"
-tmux set-hook -g "session-window-changed[100]" "run-shell -b '$CLEAR_ON_FOCUS'"
-tmux set-hook -g "client-session-changed[100]" "run-shell -b '$CLEAR_ON_FOCUS'"
+tmux set-hook -g "session-window-changed[100]" "run-shell -b '$CLAUDE_STATE clear'"
+tmux set-hook -g "client-session-changed[100]" "run-shell -b '$CLAUDE_STATE clear'"
 
 # Store plugin path so other scripts can find it
 tmux set-option -g @claude-attention-plugin-path "$CURRENT_DIR"
 
-# -- Status-right: push-based cross-session counts + periodic stale cleanup --
+# -- Status-right: cross-session counts (push-updated by daemon) --
 current_right=$(tmux show-option -gqv status-right)
+# Strip legacy status.sh #() calls from previous plugin versions
+current_right=$(echo "$current_right" | sed 's|#([^)]*status\.sh)||g')
 case "$current_right" in
-    *claude-cross-counts*|*status.sh*)
+    *claude-cross-counts*)
         ;;
     *)
-        # #{@claude-cross-counts} is updated instantly by state-change scripts.
-        # #($STATUS_SCRIPT) runs at status-interval for stale marker cleanup only (outputs nothing).
-        tmux set-option -g status-right "${current_right} #{@claude-cross-counts}#{@claude-done-msg}#($STATUS_SCRIPT)"
+        tmux set-option -g status-right "${current_right} #{@claude-cross-counts}#{@claude-done-msg}"
         ;;
 esac
+
+# -- Start state daemon (if binary exists) --
+if [ -x "$CLAUDE_STATE" ]; then
+    "$CLAUDE_STATE" serve &
+    disown
+fi
 
 # -- Opt-in popup keybinding --
 popup_key=$(tmux show-option -gqv @claude-popup-key)
@@ -83,7 +108,7 @@ if [ "$nav_keys" = "on" ]; then
     for i in 1 2 3 4 5 6 7 8 9; do
         tmux bind-key -n "M-$i" select-window -t ":$i"
     done
-    tmux bind-key -n M-0 select-window -t ":10"
+    tmux bind-key -n M-0 select-window -t ":0"
 
     # M-H / M-L: previous/next session
     tmux bind-key -n M-H switch-client -p

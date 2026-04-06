@@ -4,9 +4,10 @@
 set -euo pipefail
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACTIVE_SCRIPT="$CURRENT_DIR/active.sh"
-NOTIFY_SCRIPT="$CURRENT_DIR/notify.sh"
-STOPPED_SCRIPT="$CURRENT_DIR/stopped.sh"
+CLAUDE_STATE="$CURRENT_DIR/../bin/claude-state"
+ACTIVE_SCRIPT="$CLAUDE_STATE active"
+NOTIFY_SCRIPT="$CLAUDE_STATE attention"
+STOPPED_SCRIPT="$CLAUDE_STATE stopped"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
 hook_json() {
@@ -76,6 +77,16 @@ print_usage() {
 check_install() {
     local ok=true
 
+    echo "=== Binary ==="
+    if [ -x "$CLAUDE_STATE" ]; then
+        echo "  OK: $CLAUDE_STATE"
+    else
+        echo "FAIL: claude-state binary not found at $CLAUDE_STATE"
+        echo "      Run 'make build' or reload tmux to download it"
+        ok=false
+    fi
+
+    echo ""
     echo "=== Claude Code Hooks ==="
     if [ ! -f "$SETTINGS_FILE" ]; then
         echo "FAIL: $SETTINGS_FILE not found"
@@ -89,7 +100,7 @@ check_install() {
             if [ "$count" -eq 0 ]; then
                 echo "FAIL: No $hook_type hooks"
                 ok=false
-            elif [ "$count" -gt "$expected" ]; then
+            elif [ "$count" -ne "$expected" ]; then
                 echo "WARN: $hook_type has $count entries (expected $expected) — run --apply to fix"
                 ok=false
             else
