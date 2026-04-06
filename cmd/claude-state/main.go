@@ -811,10 +811,10 @@ func (d *daemon) cleanupStale() {
 	d.mu.Unlock()
 
 	// Detect actual state for discovered windows by inspecting pane content.
-	// Claude shows prompt hints when waiting for input.
+	// "Esc to cancel" = permission prompt (attention). Otherwise stopped (idle).
 	for i, disc := range discovered {
-		lastLine := paneLastLine(disc.target)
-		if isWaitingForInput(lastLine) {
+		content := paneFullContent(disc.target)
+		if isWaitingForInput(content) {
 			discovered[i].state = stateAttention
 			d.mu.Lock()
 			if tw := d.windows[disc.target]; tw != nil {
@@ -1283,38 +1283,28 @@ func tmuxDisplayPane(paneID, format string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// paneLastLine captures the last non-empty line of a tmux pane.
-func paneLastLine(target string) string {
+// isWaitingForInput checks if a pane's content indicates Claude is waiting
+// for a permission/elicitation response (attention state).
+// "accept edits on" is the idle input prompt — NOT attention.
+func isWaitingForInput(paneContent string) bool {
+	lines := strings.Split(paneContent, "\n")
+
+	// Look for "Esc to cancel" which appears on permission/elicitation prompts
+	for _, line := range lines {
+		if strings.Contains(line, "Esc to cancel") {
+			return true
+		}
+	}
+	return false
+}
+
+// paneFullContent captures the full pane content for multi-line analysis.
+func paneFullContent(target string) string {
 	out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p").Output()
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			return line
-		}
-	}
-	return ""
-}
-
-// isWaitingForInput checks if a pane's last line looks like a Claude Code prompt.
-func isWaitingForInput(line string) bool {
-	lower := strings.ToLower(line)
-	// Permission/elicitation prompt
-	if strings.Contains(lower, "esc to cancel") {
-		return true
-	}
-	// Edit acceptance prompt
-	if strings.Contains(lower, "accept edits") {
-		return true
-	}
-	// Question prompt
-	if strings.Contains(lower, "yes") && strings.Contains(lower, "no") {
-		return true
-	}
-	return false
+	return string(out)
 }
 
 func tmuxUnsetWindow(target string) {
