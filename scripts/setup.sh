@@ -4,9 +4,10 @@
 set -euo pipefail
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACTIVE_SCRIPT="$CURRENT_DIR/active.sh"
-NOTIFY_SCRIPT="$CURRENT_DIR/notify.sh"
-STOPPED_SCRIPT="$CURRENT_DIR/stopped.sh"
+CLAUDE_STATE="$CURRENT_DIR/../bin/claude-state"
+ACTIVE_SCRIPT="$CLAUDE_STATE active"
+NOTIFY_SCRIPT="$CLAUDE_STATE attention"
+STOPPED_SCRIPT="$CLAUDE_STATE stopped"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
 hook_json() {
