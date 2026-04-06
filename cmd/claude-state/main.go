@@ -1284,13 +1284,29 @@ func tmuxDisplayPane(paneID, format string) string {
 //   - "Esc to cancel"     → attention (permission/elicitation prompt)
 //   - otherwise           → stopped (idle at input prompt)
 func detectPaneState(paneContent string) windowState {
+	hasActive := false
+	hasAttention := false
+
 	for _, line := range strings.Split(paneContent, "\n") {
-		if strings.Contains(line, "esc to interrupt") {
-			return stateActive
+		// Active indicators (Claude is working)
+		if strings.Contains(line, "esc to interrupt") ||
+			strings.Contains(line, "stop agents") ||
+			strings.Contains(line, "Thinking") ||
+			strings.Contains(line, "Flowing") {
+			hasActive = true
 		}
+		// Attention indicators (needs user input)
 		if strings.Contains(line, "Esc to cancel") {
-			return stateAttention
+			hasAttention = true
 		}
+	}
+
+	// Attention takes priority — if both present, user input is blocking
+	if hasAttention {
+		return stateAttention
+	}
+	if hasActive {
+		return stateActive
 	}
 	return stateStopped
 }
