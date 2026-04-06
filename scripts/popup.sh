@@ -43,18 +43,27 @@ if [ -x "$PLUGIN_DIR/bin/claude-state" ] && command -v jq >/dev/null 2>&1; then
             [ -z "$key" ] && continue
             parts=""
             if [ -n "$active_dur" ] && [ "$active_dur" != "0s" ]; then
-                parts="active:${active_dur}"
+                parts="active ${active_dur}"
             fi
             if [ -n "$att_dur" ] && [ "$att_dur" != "0s" ]; then
                 [ -n "$parts" ] && parts="${parts} "
-                parts="${parts}wait:${att_dur}"
+                parts="${parts}wait ${att_dur}"
             fi
             [ -n "$parts" ] && timer_info["$key"]="$parts"
         done < <(echo "$status_json" | jq -r '.windows | to_entries[] | "\(.key)|\(.value.active_duration)|\(.value.attention_duration)"')
     fi
 fi
 
-# Build a set of windows that have a Claude pane (list-panes is authoritative)
+# Build state + timer from daemon status API (source of truth).
+# Fall back to tmux window options if daemon unavailable.
+declare -A daemon_state
+if [ -n "$status_json" ]; then
+    while IFS='|' read -r key state; do
+        [ -n "$key" ] && daemon_state["$key"]="$state"
+    done < <(echo "$status_json" | jq -r '.windows | to_entries[] | "\(.key)|\(.value.state)"')
+fi
+
+# Build a set of windows that have a Claude pane
 declare -A claude_windows
 while IFS='|' read -r sess win_idx cmd; do
     if [[ "$cmd" =~ ^[Cc]laude(-code)?$ ]]; then
@@ -65,31 +74,39 @@ done < <(tmux list-panes -a -F '#{session_name}|#{window_index}|#{pane_current_c
 # Collect windows grouped by session
 declare -A session_lines
 session_order=()
-while IFS='|' read -r sess win_idx win_name att act stop; do
+while IFS='|' read -r sess win_idx win_name _att _act _stop; do
     target="${sess}:${win_idx}"
     [ -z "${claude_windows[$target]+_}" ] && continue
 
-    if [ "$att" = "1" ]; then
-        icon="${ansi_att}!${ansi_reset}"
-        label="${ansi_att}needs attention${ansi_reset}"
-    elif [ "$act" = "1" ]; then
-        icon="${ansi_act}*${ansi_reset}"
-        label="${ansi_act}working${ansi_reset}"
-    elif [ "$stop" = "1" ]; then
-        icon="${ansi_stop}-${ansi_reset}"
-        label="${ansi_stop}idle${ansi_reset}"
-    else
-        icon=" "
-        label="${ansi_dim}no state${ansi_reset}"
+    # Prefer daemon state, fall back to tmux options
+    state="${daemon_state[$target]:-}"
+    if [ -z "$state" ]; then
+        [ "$_att" = "1" ] && state="attention"
+        [ "$_act" = "1" ] && state="active"
+        [ "$_stop" = "1" ] && state="stopped"
     fi
 
-    # Append timer info if available
+    case "$state" in
+        attention)
+            icon="${ansi_att}!${ansi_reset}"
+            label="${ansi_att}attention${ansi_reset}" ;;
+        active)
+            icon="${ansi_act}*${ansi_reset}"
+            label="${ansi_act}working${ansi_reset}" ;;
+        stopped)
+            icon="${ansi_stop}-${ansi_reset}"
+            label="${ansi_stop}idle${ansi_reset}" ;;
+        *)
+            icon=" "
+            label="${ansi_dim}--${ansi_reset}" ;;
+    esac
+
     timer=""
     if [ -n "${timer_info[$target]+_}" ]; then
-        timer=" ${ansi_dim}[${timer_info[$target]}]${ansi_reset}"
+        timer="  ${ansi_dim}${timer_info[$target]}${ansi_reset}"
     fi
 
-    line="$(printf '%b %-18s %-14s (%b)%b' "$icon" "$target" "$win_name" "$label" "$timer")"
+    line="$(printf '%b  %-5s  %-13s  %b%b' "$icon" "$target" "$win_name" "$label" "$timer")"
 
     if [ -z "${session_lines[$sess]+_}" ]; then
         session_order+=("$sess")
@@ -121,8 +138,8 @@ get_target='sed '"'"'s/\x1b\[[0-9;]*m//g'"'"' | grep -oP '"'"'[a-zA-Z0-9_./-]+:[
 # Pipe to fzf
 selected=$(printf '%s' "$output" | fzf --ansi --no-sort \
     --header='Claude Sessions — enter to switch, esc to cancel' \
-    --preview="target=\$(echo {} | $get_target); tmux capture-pane -ep -t \"\$target\" 2>/dev/null" \
-    --preview-window='right:40%')
+    --preview="target=\$(echo {} | $get_target); tmux capture-pane -ep -S -1 -t \"\$target\" 2>/dev/null" \
+    --preview-window='bottom:60%')
 
 [ -z "$selected" ] && exit 0
 

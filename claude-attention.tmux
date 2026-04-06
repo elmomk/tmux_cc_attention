@@ -90,7 +90,8 @@ fi
 # -- Opt-in popup keybinding --
 popup_key=$(tmux show-option -gqv @claude-popup-key)
 if [ -n "$popup_key" ]; then
-    tmux bind-key "$popup_key" display-popup -E -w 60% -h 60% -T ' Claude Sessions ' "$CURRENT_DIR/scripts/popup.sh"
+    tmux bind-key "$popup_key" display-popup -E -w 80% -h 80% -T ' Claude Sessions ' "$CURRENT_DIR/scripts/popup.sh"
+    tmux bind-key -n "M-g" display-popup -E -w 80% -h 80% -T ' Claude Sessions ' "$CURRENT_DIR/scripts/popup.sh"
 fi
 
 # -- Opt-in window auto-naming (names new windows after cwd basename) --

@@ -676,7 +676,9 @@ func (d *daemon) clearWindow(req *request) {
 	}
 
 	tw.finalizeInterval(now)
-	tw.state = stateNone
+	// Stay as stopped (not stateNone) — Claude is still running, user just focused the window.
+	// This keeps the window in the status API so the popup always shows it.
+	tw.state = stateStopped
 
 	// Mark most recent unresponded notification for this target as responded
 	for i := len(d.notifications) - 1; i >= 0; i-- {

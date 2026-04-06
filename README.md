@@ -16,7 +16,12 @@ Requires **tmux >= 3.0** and **Go >= 1.23** (for building).
 - **Cross-session**: Status bar shows `!3 *2 -1` counts from other sessions
 - **Desktop notifications**: Linux (`notify-send`) and Windows (PowerShell toast) with click-to-focus
 - **Colorblind-friendly**: Text prefixes (`*`, `!`, `-`) alongside colors
-- **Session dashboard**: `prefix + G` popup to see all Claude windows and jump to one (opt-in, requires fzf)
+- **Per-window timers**: Track how long Claude has been working or waiting for input
+- **Notification history**: Records attention events and whether you responded
+- **Session dashboard**: `Alt+g` or `prefix + G` popup with state, timers, and pane preview (opt-in, requires fzf)
+- **Status API**: `claude-state status` outputs full state as JSON
+- **Auto-discovery**: Detects Claude windows even if hooks didn't fire, reads pane content to determine state
+- **Persistent state**: Survives daemon restarts — timers resume, markers re-applied
 - **Done notification**: Inline status-right indicator when Claude finishes working (opt-in)
 - **Stale cleanup**: Daemon detects when Claude exits and removes orphaned markers
 - **Themes**: Kanagawa Dragon, Catppuccin Mocha, Tokyo Night, Dracula
@@ -122,10 +127,39 @@ Each theme sets matching colors for all indicators. The selected window tab uses
 An optional popup that shows all Claude windows with their state and lets you jump to any one. Requires [fzf](https://github.com/junegunn/fzf).
 
 ```tmux
-set -g @claude-popup-key 'G'   # prefix + G opens the popup
+set -g @claude-popup-key 'G'   # prefix + G opens the popup (Alt+g also works)
 ```
 
-The popup shows each Claude window with a state icon (`!` attention, `*` working, `-` stopped), a live preview of the terminal content, and switches to the selected window on enter.
+The popup shows each Claude window with:
+- State icon and label (`!` attention, `*` working, `-` idle)
+- Accumulated timers (active duration, wait duration)
+- Live preview of the pane's last line
+- Enter to switch, Esc to cancel
+
+## Status API
+
+Query the daemon's full state as JSON:
+
+```bash
+claude-state status
+```
+
+Returns all tracked windows with state, timers, notification history, and counts:
+
+```json
+{
+  "ok": true,
+  "uptime": "2h15m",
+  "windows": {
+    "0:4": {
+      "state": "active",
+      "active_duration": "45m32s",
+      "attention_duration": "3m10s"
+    }
+  },
+  "counts": { "active": 2, "attention": 1, "stopped": 3 }
+}
+```
 
 ## Known limitations
 

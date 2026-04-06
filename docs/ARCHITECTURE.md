@@ -73,6 +73,60 @@ All transitions go through the daemon's state machine. The daemon holds the lock
 
 A post-transition race guard in `setActive` re-checks the state after writing to tmux — if `setAttention` ran concurrently, the attention format is restored.
 
+## Dual State Detection: Hooks + Pane Scanning
+
+State is determined through two complementary mechanisms:
+
+```mermaid
+flowchart LR
+    subgraph Push["Push (hooks, ~1ms)"]
+        PTU["PreToolUse"] -->|active| D["Daemon"]
+        NOT["Notification"] -->|attention| D
+        STP["Stop"] -->|stopped| D
+    end
+
+    subgraph Pull["Pull (30s scan)"]
+        SCAN["capture-pane"] --> DETECT{"Content?"}
+        DETECT -->|"esc to interrupt"| ACTIVE["active"]
+        DETECT -->|"Esc to cancel"| ATT["attention"]
+        DETECT -->|otherwise| STOP["stopped"]
+        ACTIVE --> D
+        ATT --> D
+        STOP --> D
+    end
+
+    D --> TMUX["tmux markers"]
+    D --> SAVE["state.json"]
+
+    style Push fill:#313244,stroke:#a6e3a1,color:#cdd6f4
+    style Pull fill:#313244,stroke:#89b4fa,color:#cdd6f4
+```
+
+Push catches instant state changes. Pull catches: windows that existed before the daemon started, state changes that hooks missed (e.g., subagent work), and windows where Claude restarted.
+
+## Persistence
+
+State is persisted to `$XDG_RUNTIME_DIR/claude-state/claude-state.json`:
+- Saved after every state transition (1-second debounce)
+- Saved synchronously on shutdown (SIGTERM/idle timeout)
+- Loaded on startup with tmux markers re-applied
+- Atomic writes (tmp file + rename)
+
+Persisted data includes: window states, timer accumulators (`activeSince`, `totalActive`), and notification history (last 200 records with response tracking).
+
+Timer accuracy across restarts: if the daemon crashes while a window is active, the saved `activeSince` timestamp is preserved. On reload, the duration includes time the daemon was down — correct since Claude was still working.
+
+## Session Dashboard Popup
+
+`popup.sh` runs inside `tmux display-popup -E` via `Alt+g` or `prefix + G`. It:
+
+1. Calls `claude-state status` to get state, timers, and counts from the daemon (source of truth)
+2. Falls back to tmux window options if daemon unavailable
+3. Calls `tmux list-panes -a` to find Claude windows
+4. Formats each window: `icon  target  name  state  timer`
+5. Pipes to `fzf --ansi` with bottom pane preview (last line via `capture-pane -S -1`)
+6. On selection: `tmux switch-client -t session:window`
+
 ## Binary Modes
 
 ### Client mode (`claude-state <verb>`)
