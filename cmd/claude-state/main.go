@@ -754,13 +754,13 @@ func (d *daemon) staleCleanupLoop() {
 
 func (d *daemon) cleanupStale() {
 	out, err := exec.Command("tmux", "list-panes", "-a",
-		"-F", "#{session_name}:#{window_index}|#{pane_current_command}|#{pane_pid}").Output()
+		"-F", "#{session_name}:#{window_index}|#{pane_current_command}|#{pane_id}").Output()
 	if err != nil {
 		return
 	}
 
 	type paneInfo struct {
-		pid string
+		paneID string // e.g. "%5" — used to capture the correct pane in split windows
 	}
 	claudeWindows := make(map[string]paneInfo)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -770,7 +770,7 @@ func (d *daemon) cleanupStale() {
 		}
 		lower := strings.ToLower(parts[1])
 		if lower == "claude" || lower == "claude-code" {
-			claudeWindows[parts[0]] = paneInfo{pid: parts[2]}
+			claudeWindows[parts[0]] = paneInfo{paneID: parts[2]}
 		}
 	}
 
@@ -780,7 +780,7 @@ func (d *daemon) cleanupStale() {
 	// Remove stale: tracked but Claude no longer running
 	var stale []string
 	for target, tw := range d.windows {
-		if tw.state != stateNone && claudeWindows[target].pid == "" {
+		if tw.state != stateNone && claudeWindows[target].paneID == "" {
 			stale = append(stale, target)
 			tw.finalizeInterval(now)
 			tw.state = stateNone
@@ -791,10 +791,11 @@ func (d *daemon) cleanupStale() {
 	// (a stopped window may have started working again without hooks firing).
 	type discovery struct {
 		target   string
+		paneID   string
 		newState windowState
 	}
 	var discovered []discovery
-	for target := range claudeWindows {
+	for target, info := range claudeWindows {
 		tw := d.windows[target]
 		if tw == nil || tw.state == stateNone || tw.state == stateStopped {
 			if tw == nil {
@@ -804,14 +805,14 @@ func (d *daemon) cleanupStale() {
 				tw = &trackedWindow{}
 				d.windows[target] = tw
 			}
-			discovered = append(discovered, discovery{target: target})
+			discovered = append(discovered, discovery{target: target, paneID: info.paneID})
 		}
 	}
 	d.mu.Unlock()
 
-	// Detect state from pane content
+	// Detect state from pane content (target the specific Claude pane, not active pane)
 	for i, disc := range discovered {
-		content := paneFullContent(disc.target)
+		content := paneFullContent(disc.paneID)
 		detected := detectPaneState(content)
 		discovered[i].newState = detected
 
