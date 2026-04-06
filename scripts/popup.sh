@@ -85,14 +85,19 @@ for sess in "${session_order[@]}"; do
     done <<< "${session_lines[$sess]}"
 done
 
+# Strip ANSI escapes to extract session:window target
+strip_ansi='s/\x1b\[[0-9;]*m//g'
+extract_target='sed "s/^[[:space:]]*//" | awk "{print \$1}"'
+
 # Pipe to fzf
 selected=$(printf '%s' "$output" | fzf --ansi --no-sort \
     --header='Claude Sessions — enter to switch, esc to cancel' \
-    --preview='target=$(echo {} | sed "s/^.\{4\}//" | awk "{print \$1}"); tmux capture-pane -ep -t "$target" 2>/dev/null' \
+    --preview="target=\$(echo {} | sed '$strip_ansi' | $extract_target); tmux capture-pane -ep -t \"\$target\" 2>/dev/null" \
     --preview-window='right:40%')
 
 [ -z "$selected" ] && exit 0
 
-# Extract target (session:window) — skip leading "  X " (indent + icon + space)
-target=$(echo "$selected" | sed 's/^.\{4\}//' | awk '{print $1}')
-[ -n "$target" ] && tmux switch-client -t "$target" 2>/dev/null
+# Extract target (session:window) — strip ANSI, trim whitespace, take first field
+target=$(echo "$selected" | sed "$strip_ansi" | sed 's/^[[:space:]]*//' | awk '{print $1}')
+# Only switch if target looks like session:window (skip header lines)
+[[ "$target" == *:* ]] && tmux switch-client -t "$target" 2>/dev/null

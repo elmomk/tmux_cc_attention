@@ -17,11 +17,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -67,10 +69,7 @@ func runtimePath(name string) string {
 }
 
 func ensureRuntimeDir() {
-	dir := runtimePath("")
-	// Remove trailing filename component
-	dir = dir[:strings.LastIndex(dir, "/")]
-	os.MkdirAll(dir, 0700)
+	os.MkdirAll(filepath.Dir(socketPath), 0700)
 }
 
 // ── Client mode ──
@@ -215,13 +214,17 @@ func ensureDaemon() {
 func sendRequest(req *request) {
 	conn, err := net.DialTimeout("unix", socketPath, time.Second)
 	if err != nil {
+		log.Printf("dial daemon: %v", err)
 		return
 	}
 	defer conn.Close()
 
 	data, _ := json.Marshal(req)
 	conn.SetWriteDeadline(time.Now().Add(time.Second))
-	conn.Write(data)
+	if _, err := conn.Write(data); err != nil {
+		log.Printf("write: %v", err)
+		return
+	}
 	conn.(*net.UnixConn).CloseWrite()
 
 	conn.SetReadDeadline(time.Now().Add(time.Second))
@@ -336,15 +339,14 @@ func (d *daemon) handleConn(conn net.Conn) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(readTimeout))
 
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil || n == 0 {
+	data, err := io.ReadAll(io.LimitReader(conn, 4096))
+	if err != nil || len(data) == 0 {
 		conn.Write([]byte("{\"ok\":false}\n"))
 		return
 	}
 
 	var req request
-	if err := json.Unmarshal(buf[:n], &req); err != nil {
+	if err := json.Unmarshal(data, &req); err != nil {
 		conn.Write([]byte("{\"ok\":false}\n"))
 		return
 	}
@@ -692,7 +694,9 @@ if (Get-Command New-BurntToastNotification -EA 0) {
 }
 `, strings.ReplaceAll(body, "'", "''")))
 
-	d.runNotifyCmd(cmd)
+	if _, err := d.runNotifyCmd(cmd); err != nil {
+		log.Printf("windows notification: %v", err)
+	}
 }
 
 func (d *daemon) killNotify() {
@@ -886,9 +890,9 @@ func main() {
 		}
 		os.Remove(socketPath)
 
-		if f, err := os.Open(os.DevNull); err == nil {
-			syscall.Dup2(int(f.Fd()), 0)
-			f.Close()
+		// Redirect stdin to /dev/null (daemon never reads it)
+		if null, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0); err == nil {
+			os.Stdin = null
 		}
 
 		d := &daemon{

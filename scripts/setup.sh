@@ -90,7 +90,7 @@ check_install() {
             if [ "$count" -eq 0 ]; then
                 echo "FAIL: No $hook_type hooks"
                 ok=false
-            elif [ "$count" -gt "$expected" ]; then
+            elif [ "$count" -ne "$expected" ]; then
                 echo "WARN: $hook_type has $count entries (expected $expected) — run --apply to fix"
                 ok=false
             else
