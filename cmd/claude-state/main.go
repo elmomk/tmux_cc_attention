@@ -1197,6 +1197,7 @@ func (d *daemon) idleWatchdog() {
 func (d *daemon) shutdown() {
 	d.killNotify()
 	d.saveState() // persist before exit
+	tmux("set-option", "-gu", "@claude-watcher")
 	d.mu.Lock()
 	if d.doneTimer != nil {
 		d.doneTimer.Stop()
@@ -1237,6 +1238,7 @@ func (d *daemon) serve() error {
 	d.applyTmuxMarkers()
 	d.cleanupStale() // immediate stale check on startup
 	d.refreshCounts()
+	tmux("set-option", "-g", "@claude-watcher", fmt.Sprintf("#[fg=%s]⦿ ", d.fmt.actColor))
 
 	log.Printf("listening on %s (pid %d)", socketPath, os.Getpid())
 

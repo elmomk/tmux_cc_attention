@@ -77,7 +77,7 @@ case "$current_right" in
     *claude-cross-counts*)
         ;;
     *)
-        tmux set-option -g status-right "${current_right} #{@claude-cross-counts}#{@claude-done-msg}"
+        tmux set-option -g status-right "${current_right} #{@claude-watcher}#{@claude-cross-counts}#{@claude-done-msg}"
         ;;
 esac
 
