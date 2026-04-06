@@ -821,13 +821,20 @@ func (d *daemon) cleanupStale() {
 		d.mu.Lock()
 		tw := d.windows[disc.target]
 		if tw != nil && tw.state != detected {
-			tw.finalizeInterval(now)
-			tw.state = detected
-			switch detected {
-			case stateActive:
-				tw.activeSince = &now
-			case stateAttention:
-				tw.attSince = &now
+			// Don't downgrade active→attention via scan — hooks are authoritative
+			// for that transition and fire instantly. The scan could catch a
+			// permission prompt that's about to be auto-approved, causing a red blink.
+			// Only upgrade: none/stopped→active/attention, or active→stopped.
+			skip := tw.state == stateActive && detected == stateAttention
+			if !skip {
+				tw.finalizeInterval(now)
+				tw.state = detected
+				switch detected {
+				case stateActive:
+					tw.activeSince = &now
+				case stateAttention:
+					tw.attSince = &now
+				}
 			}
 		}
 		d.mu.Unlock()
