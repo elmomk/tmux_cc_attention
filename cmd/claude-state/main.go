@@ -787,9 +787,12 @@ func (d *daemon) cleanupStale() {
 		}
 	}
 
-	// Discover: Claude running but not tracked (e.g., daemon restarted without state file,
-	// or Claude started before hooks were configured). Mark as stopped (safest default).
-	var discovered []string
+	// Discover: Claude running but not tracked. Detect state from pane content.
+	type discovery struct {
+		target string
+		state  windowState
+	}
+	var discovered []discovery
 	for target := range claudeWindows {
 		tw := d.windows[target]
 		if tw == nil || tw.state == stateNone {
@@ -800,26 +803,54 @@ func (d *daemon) cleanupStale() {
 				tw = &trackedWindow{}
 				d.windows[target] = tw
 			}
-			tw.state = stateStopped
-			discovered = append(discovered, target)
+			// Detect state from pane content (will be refined after unlock)
+			tw.state = stateStopped // default
+			discovered = append(discovered, discovery{target: target})
 		}
 	}
 	d.mu.Unlock()
+
+	// Detect actual state for discovered windows by inspecting pane content.
+	// Claude shows prompt hints when waiting for input.
+	for i, disc := range discovered {
+		lastLine := paneLastLine(disc.target)
+		if isWaitingForInput(lastLine) {
+			discovered[i].state = stateAttention
+			d.mu.Lock()
+			if tw := d.windows[disc.target]; tw != nil {
+				tw.state = stateAttention
+				now := time.Now()
+				tw.attSince = &now
+			}
+			d.mu.Unlock()
+		}
+	}
 
 	for _, target := range stale {
 		log.Printf("stale: %s", target)
 		tmuxUnsetWindow(target)
 	}
 
-	for _, target := range discovered {
-		log.Printf("discovered: %s", target)
-		tmux(
-			"set-window-option", "-t", target, "window-status-format", d.fmt.stopped, ";",
-			"set-window-option", "-t", target, "window-status-current-format", d.fmt.stoppedCur, ";",
-			"set-window-option", "-t", target, "@claude-stopped", "1", ";",
-			"set-window-option", "-t", target, "-u", "@claude-active", ";",
-			"set-window-option", "-t", target, "-u", "@claude-attention",
-		)
+	for _, disc := range discovered {
+		log.Printf("discovered: %s (%s)", disc.target, disc.state)
+		switch disc.state {
+		case stateAttention:
+			tmux(
+				"set-window-option", "-t", disc.target, "window-status-format", d.fmt.attention, ";",
+				"set-window-option", "-t", disc.target, "window-status-current-format", d.fmt.attentionCur, ";",
+				"set-window-option", "-t", disc.target, "@claude-attention", "1", ";",
+				"set-window-option", "-t", disc.target, "-u", "@claude-active", ";",
+				"set-window-option", "-t", disc.target, "-u", "@claude-stopped",
+			)
+		default:
+			tmux(
+				"set-window-option", "-t", disc.target, "window-status-format", d.fmt.stopped, ";",
+				"set-window-option", "-t", disc.target, "window-status-current-format", d.fmt.stoppedCur, ";",
+				"set-window-option", "-t", disc.target, "@claude-stopped", "1", ";",
+				"set-window-option", "-t", disc.target, "-u", "@claude-active", ";",
+				"set-window-option", "-t", disc.target, "-u", "@claude-attention",
+			)
+		}
 	}
 
 	if len(stale) > 0 || len(discovered) > 0 {
@@ -1250,6 +1281,40 @@ func tmuxGetFormat(format string) string {
 func tmuxDisplayPane(paneID, format string) string {
 	out, _ := exec.Command("tmux", "display-message", "-t", paneID, "-p", format).Output()
 	return strings.TrimSpace(string(out))
+}
+
+// paneLastLine captures the last non-empty line of a tmux pane.
+func paneLastLine(target string) string {
+	out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p").Output()
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// isWaitingForInput checks if a pane's last line looks like a Claude Code prompt.
+func isWaitingForInput(line string) bool {
+	lower := strings.ToLower(line)
+	// Permission/elicitation prompt
+	if strings.Contains(lower, "esc to cancel") {
+		return true
+	}
+	// Edit acceptance prompt
+	if strings.Contains(lower, "accept edits") {
+		return true
+	}
+	// Question prompt
+	if strings.Contains(lower, "yes") && strings.Contains(lower, "no") {
+		return true
+	}
+	return false
 }
 
 func tmuxUnsetWindow(target string) {
