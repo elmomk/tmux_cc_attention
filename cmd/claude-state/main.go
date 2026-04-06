@@ -796,19 +796,19 @@ func (d *daemon) cleanupStale() {
 		paneID   string
 		newState windowState
 	}
+	// Re-check ALL tracked windows (not just stopped/none). An active window
+	// may be showing a permission prompt if the Notification hook was delayed.
 	var discovered []discovery
 	for target, info := range claudeWindows {
 		tw := d.windows[target]
-		if tw == nil || tw.state == stateNone || tw.state == stateStopped {
-			if tw == nil {
-				if len(d.windows) >= maxWindows {
-					continue
-				}
-				tw = &trackedWindow{}
-				d.windows[target] = tw
+		if tw == nil {
+			if len(d.windows) >= maxWindows {
+				continue
 			}
-			discovered = append(discovered, discovery{target: target, paneID: info.paneID})
+			tw = &trackedWindow{}
+			d.windows[target] = tw
 		}
+		discovered = append(discovered, discovery{target: target, paneID: info.paneID})
 	}
 	d.mu.Unlock()
 
