@@ -77,6 +77,16 @@ print_usage() {
 check_install() {
     local ok=true
 
+    echo "=== Binary ==="
+    if [ -x "$CLAUDE_STATE" ]; then
+        echo "  OK: $CLAUDE_STATE"
+    else
+        echo "FAIL: claude-state binary not found at $CLAUDE_STATE"
+        echo "      Run 'make build' or reload tmux to download it"
+        ok=false
+    fi
+
+    echo ""
     echo "=== Claude Code Hooks ==="
     if [ ! -f "$SETTINGS_FILE" ]; then
         echo "FAIL: $SETTINGS_FILE not found"

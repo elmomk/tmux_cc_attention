@@ -9,10 +9,24 @@
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_STATE="$CURRENT_DIR/bin/claude-state"
 
-# Build binary if missing
+# Ensure binary exists: check → download prebuilt → build from source
 if [ ! -x "$CLAUDE_STATE" ]; then
-    if command -v go >/dev/null 2>&1; then
-        (cd "$CURRENT_DIR" && go build -o bin/claude-state ./cmd/claude-state/) 2>/dev/null
+    mkdir -p "$CURRENT_DIR/bin"
+    _os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    _arch=$(uname -m)
+    case "$_arch" in
+        x86_64)  _arch="amd64" ;;
+        aarch64) _arch="arm64" ;;
+    esac
+    _url="https://github.com/elmomk/tmux_cc_attention/releases/latest/download/claude-state-${_os}-${_arch}"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -o "$CLAUDE_STATE" "$_url" 2>/dev/null && chmod +x "$CLAUDE_STATE"
+    fi
+
+    # Fallback: build from source if download failed
+    if [ ! -x "$CLAUDE_STATE" ] && command -v go >/dev/null 2>&1; then
+        (cd "$CURRENT_DIR" && go build -ldflags="-s -w" -o bin/claude-state ./cmd/claude-state/) 2>/dev/null
     fi
 fi
 

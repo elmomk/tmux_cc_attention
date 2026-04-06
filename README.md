@@ -37,13 +37,13 @@ set -g @plugin 'elmomk/tmux_cc_attention'
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Then press `prefix + I` to install. The Go binary builds automatically on first load (requires `go` in PATH).
+Then press `prefix + I` to install. The binary is downloaded automatically from GitHub Releases. If no prebuilt binary is available for your platform, it falls back to building from source (requires `go` in PATH).
 
 ### Manual
 
 ```bash
 git clone https://github.com/elmomk/tmux_cc_attention ~/tmux_cc_attention
-cd ~/tmux_cc_attention && make build
+cd ~/tmux_cc_attention && make build   # or let tmux download it on first load
 ```
 
 Add to `~/.tmux.conf`:
