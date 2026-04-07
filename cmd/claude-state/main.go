@@ -925,23 +925,25 @@ func (d *daemon) notifyLinux(req *request, body string) {
 }
 
 func (d *daemon) notifyWindows(body string) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-File", "-")
-	cmd.Stdin = strings.NewReader(fmt.Sprintf(`
-$title = 'Claude Code needs attention'
-$body = '%s'
-$ErrorActionPreference = 'SilentlyContinue'
-if (Get-Command New-BurntToastNotification -EA 0) {
-    New-BurntToastNotification -Text $title, $body -AppLogo $null
-} else {
-    [void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
-    $t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(1)
-    $x = $t.GetElementsByTagName('text')
-    [void]$x.Item(0).AppendChild($t.CreateTextNode($title))
-    [void]$x.Item(1).AppendChild($t.CreateTextNode($body))
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Claude Code').Show(
-        [Windows.UI.Notifications.ToastNotification]::new($t))
-}
-`, strings.ReplaceAll(body, "'", "''")))
+	appID := tmuxGetOption("@claude-notify-appid")
+	if appID == "" {
+		appID = "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"
+	}
+
+	script := fmt.Sprintf(
+		"[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]; "+
+			"$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(1); "+
+			"$x = $t.GetElementsByTagName('text'); "+
+			"[void]$x.Item(0).AppendChild($t.CreateTextNode('%s')); "+
+			"[void]$x.Item(1).AppendChild($t.CreateTextNode('%s')); "+
+			"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('%s').Show("+
+			"[Windows.UI.Notifications.ToastNotification]::new($t))",
+		strings.ReplaceAll("Claude Code needs attention", "'", "''"),
+		strings.ReplaceAll(body, "'", "''"),
+		strings.ReplaceAll(appID, "'", "''"),
+	)
+
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 
 	if _, err := d.runNotifyCmd(cmd); err != nil {
 		log.Printf("windows notification: %v", err)

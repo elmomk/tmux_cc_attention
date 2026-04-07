@@ -130,6 +130,27 @@ check_install() {
     done
 
     echo ""
+    echo "=== Notifications ==="
+    local notify_platform
+    notify_platform=$(tmux show-option -gqv @claude-notify-platform 2>/dev/null || echo "auto")
+    echo "  Platform: $notify_platform"
+    if [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WT_SESSION" ]; then
+        if [ "$notify_platform" != "windows" ]; then
+            echo "WARN: WSL detected but @claude-notify-platform is not 'windows'"
+            echo "      notify-send won't work without a D-Bus daemon"
+            echo "      Run: tmux set -g @claude-notify-platform 'windows'"
+            ok=false
+        fi
+        local notify_appid
+        notify_appid=$(tmux show-option -gqv @claude-notify-appid 2>/dev/null)
+        if [ -n "$notify_appid" ]; then
+            echo "  AppID:    $notify_appid"
+        else
+            echo "  AppID:    default (Windows Terminal)"
+        fi
+    fi
+
+    echo ""
     echo "=== Optional Features ==="
     local auto_name
     auto_name=$(tmux show-option -gqv @claude-auto-name 2>/dev/null || echo "off")
@@ -212,6 +233,19 @@ apply_hook() {
     echo "  PreToolUse:   $ACTIVE_SCRIPT"
     echo "  Notification: $NOTIFY_SCRIPT (attention), $STOPPED_SCRIPT (idle)"
     echo "  Stop:         $STOPPED_SCRIPT"
+
+    # WSL: auto-configure Windows notifications
+    if [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WT_SESSION" ]; then
+        local current_platform
+        current_platform=$(tmux show-option -gqv @claude-notify-platform 2>/dev/null)
+        if [ "$current_platform" != "windows" ]; then
+            tmux set-option -g @claude-notify-platform 'windows'
+            echo ""
+            echo "WSL detected — set @claude-notify-platform 'windows'"
+            echo "  Toast AppID defaults to Windows Terminal."
+            echo "  Override with: tmux set -g @claude-notify-appid '<AppUserModelId>'"
+        fi
+    fi
 }
 
 case "${1:-}" in
