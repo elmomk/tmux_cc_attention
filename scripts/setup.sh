@@ -6,7 +6,7 @@ set -euo pipefail
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_STATE="$CURRENT_DIR/../bin/claude-state"
 ACTIVE_SCRIPT="$CLAUDE_STATE active"
-NOTIFY_SCRIPT="$CLAUDE_STATE attention"
+NOTIFY_SCRIPT="$CLAUDE_STATE notify"
 STOPPED_SCRIPT="$CLAUDE_STATE stopped"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
@@ -234,7 +234,7 @@ apply_hook() {
     echo "  Notification: $NOTIFY_SCRIPT (attention), $STOPPED_SCRIPT (idle)"
     echo "  Stop:         $STOPPED_SCRIPT"
 
-    # WSL: auto-configure Windows notifications
+    # WSL: auto-configure Windows notifications + click-to-focus shortcut
     if [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WT_SESSION" ]; then
         local current_platform
         current_platform=$(tmux show-option -gqv @claude-notify-platform 2>/dev/null)
@@ -242,8 +242,88 @@ apply_hook() {
             tmux set-option -g @claude-notify-platform 'windows'
             echo ""
             echo "WSL detected — set @claude-notify-platform 'windows'"
-            echo "  Toast AppID defaults to Windows Terminal."
-            echo "  Override with: tmux set -g @claude-notify-appid '<AppUserModelId>'"
+        fi
+
+        # Register click-to-focus shortcut with custom AUMID
+        local aumid="Claude.Code.Notify"
+        local focus_cmd
+        focus_cmd="$(cd "$CURRENT_DIR/.." && pwd)/bin/claude-state focus-click"
+        echo ""
+        echo "Registering Windows notification shortcut..."
+        if powershell.exe -NoProfile -NonInteractive -Command "
+\$lnkPath = \"\$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Claude Code Notify.lnk\"
+\$shell = New-Object -ComObject WScript.Shell
+\$sc = \$shell.CreateShortcut(\$lnkPath)
+\$sc.TargetPath = 'wsl.exe'
+\$sc.Arguments = '-- $focus_cmd'
+\$sc.Description = 'Claude Code notification click handler'
+\$sc.WindowStyle = 7
+\$sc.Save()
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
+public struct PROPERTYKEY {
+    public Guid fmtid;
+    public uint pid;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+public struct PROPVARIANT {
+    [FieldOffset(0)] public ushort vt;
+    [FieldOffset(8)] public IntPtr pVal;
+    public static PROPVARIANT FromString(string s) {
+        var pv = new PROPVARIANT();
+        pv.vt = 31;
+        pv.pVal = Marshal.StringToCoTaskMemUni(s);
+        return pv;
+    }
+}
+
+[ComImport, Guid(\"886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IPropertyStore {
+    uint GetCount();
+    PROPERTYKEY GetAt(uint iProp);
+    PROPVARIANT GetValue(ref PROPERTYKEY key);
+    void SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+    void Commit();
+}
+
+public static class PropStore {
+    [DllImport(\"shell32.dll\")]
+    static extern int SHGetPropertyStoreFromParsingName(
+        [MarshalAs(UnmanagedType.LPWStr)] string pszPath,
+        IntPtr pbc, uint flags, ref Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IPropertyStore ppv);
+
+    public static void SetAumid(string path, string aumid) {
+        Guid IID = new Guid(\"886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99\");
+        IPropertyStore store;
+        int hr = SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 2, ref IID, out store);
+        if (hr != 0) throw new System.Runtime.InteropServices.COMException(\"failed\", hr);
+        var key = new PROPERTYKEY { fmtid = new Guid(\"9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3\"), pid = 5 };
+        var pv = PROPVARIANT.FromString(aumid);
+        store.SetValue(ref key, ref pv);
+        store.Commit();
+    }
+}
+'@
+[PropStore]::SetAumid(\$lnkPath, '$aumid')
+
+# Register AUMID in notification settings so Windows recognizes it
+\$regPath = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\$aumid'
+if (-not (Test-Path \$regPath)) { New-Item -Path \$regPath -Force | Out-Null }
+
+Write-Output 'OK'
+" 2>/dev/null | tr -d '\r' | grep -q '^OK$'; then
+            tmux set-option -g @claude-notify-appid "$aumid"
+            echo "  OK: Shortcut registered with AUMID '$aumid'"
+            echo "  Click-to-focus enabled for notifications"
+        else
+            echo "WARN: Could not register shortcut — falling back to Windows Terminal AppID"
+            echo "      Clicking notifications will open a new terminal tab"
         fi
     fi
 }
